@@ -24,11 +24,11 @@ from .types import CodebaseSnapshot, RLMTrace, TraceStep
 
 
 def build_deno_command() -> list[str]:
-    """Build a Deno command with node_modules in allowed read paths.
+    """Build a Deno command for RLM code execution.
 
-    This is needed for Deno 2.x where npm packages (like pyodide) are stored
-    in local node_modules with nodeModulesDir: 'auto', but DSPy's default
-    PythonInterpreter only adds Deno's global cache to --allow-read.
+    This is needed for Deno 2.x compatibility where npm packages (like pyodide)
+    are stored in Deno's global cache. We use --node-modules-dir=false to ensure
+    Deno uses its global npm cache rather than looking for a local node_modules.
 
     Returns:
         List of command arguments for Deno
@@ -60,13 +60,11 @@ def build_deno_command() -> list[str]:
     if deno_dir:
         read_paths.append(deno_dir)
 
-    # Add node_modules if it exists (for Deno 2.x with nodeModulesDir: 'auto')
-    node_modules = os.path.join(os.getcwd(), 'node_modules')
-    if os.path.exists(node_modules):
-        read_paths.append(node_modules)
-
+    # Deno 2.x: Use --node-modules-dir=false to use global npm cache
+    # This is critical for Deno 2.x which otherwise looks for local node_modules
     return [
         'deno', 'run',
+        '--node-modules-dir=false',  # Use Deno's global npm cache
         f'--allow-read={",".join(read_paths)}',
         runner_path
     ]

@@ -26,6 +26,9 @@ https://github.com/user-attachments/assets/e17951e6-d73d-4cc0-8199-66c7e02f049f
 
    # Or standard pip
    pip install -e .
+
+   # Pre-cache Deno dependencies (speeds up first run)
+   deno cache npm:pyodide/pyodide.js
    ```
 
 2. **Install Frontend (web)**
@@ -64,6 +67,49 @@ Open `http://localhost:3000` in your browser.
 
 You can also use the tool directly from the terminal:
 
+### `cr` - Local Codebase Review
 - **Interactive Q&A**: `cr ask`
 - **One-shot Review**: `cr review -q "What does this repo do?"`
 - **Help**: `cr --help`
+
+### `asyncreview` - GitHub PR/Issue Review (New!)
+
+Review GitHub PRs and Issues directly from the command line:
+
+```bash
+# Review a PR
+asyncreview review --url https://github.com/org/repo/pull/123 -q "Any security concerns?"
+
+# Review with markdown output (great for docs/skills)
+asyncreview review --url https://github.com/org/repo/pull/123 \
+  -q "Summarize the changes" \
+  --output markdown
+
+# Quiet mode for scripting (no progress bars)
+asyncreview review --url https://github.com/org/repo/pull/123 \
+  -q "What does this PR do?" \
+  --quiet --output json
+
+# Use a specific model
+asyncreview review --url https://github.com/org/repo/pull/123 \
+  -q "Deep code review" \
+  --model gemini-3.0-pro-preview
+```
+
+**Options:**
+- `--url, -u`: GitHub PR or Issue URL (required)
+- `--question, -q`: Question to ask (required)
+- `--output, -o`: Output format: `text`, `markdown`, `json` (default: text)
+- `--quiet`: Suppress progress output
+- `--model, -m`: Model override (default: from .env)
+
+## Troubleshooting
+
+### Deno/Pyodide Issues
+If you see errors like `Could not find npm:pyodide`, run:
+```bash
+deno cache npm:pyodide/pyodide.js
+```
+
+### Slow First Run
+The first run may take longer as Deno downloads and compiles pyodide (~50MB). Subsequent runs are instant.

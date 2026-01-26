@@ -51,6 +51,11 @@ uv venv
 # Install dependencies into the virtual environment
 uv pip install -e .
 
+# 3b. Pre-cache Deno dependencies (pyodide for RLM sandboxed execution)
+echo -e "${BLUE}Caching Deno dependencies (pyodide)...${NC}"
+deno cache npm:pyodide/pyodide.js 2>/dev/null || echo -e "${YELLOW}Note: pyodide will be cached on first run${NC}"
+echo -e "${GREEN}✓ Deno dependencies ready${NC}"
+
 # 4. Frontend Setup
 echo -e "${BLUE}Setting up Frontend...${NC}"
 cd web
