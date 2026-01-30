@@ -13,6 +13,7 @@ Open-source Agentic code review tool inspired by DevinReview, using Recursive La
 https://github.com/user-attachments/assets/e17951e6-d73d-4cc0-8199-66c7e02f049f
 
 
+<img width="2000" height="1296" alt="image" src="https://github.com/user-attachments/assets/41955d76-00d9-4987-9ea8-3e5243c895f7" />
 
 
 <img width="1146" height="609" alt="Screenshot 2026-01-24 at 10 37 53 PM" src="https://github.com/user-attachments/assets/1b67cf2d-6923-46b8-8fac-83e6bf707ce3" />
