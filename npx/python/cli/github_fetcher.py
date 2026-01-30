@@ -148,6 +148,7 @@ async def fetch_pr(owner: str, repo: str, number: int) -> dict:
         "state": pr_data.get("state", "open"),
         "base_branch": pr_data["base"]["ref"],
         "head_branch": pr_data["head"]["ref"],
+        "head_sha": pr_data["head"]["sha"],  # For consistent file reads
         "files": files,
         "commits": commits_list,
         "comments": comments_list,

@@ -31,13 +31,28 @@ from .virtual_runner import VirtualReviewRunner
 console = Console()
 
 
-def print_step(step_num: int, reasoning: str, code: str):
+def print_step(step_num: int, reasoning: str, code: str, output: str = ""):
     """Print RLM step progress (when not in quiet mode)."""
+    from rich.syntax import Syntax
+    
     console.print(f"\n[cyan]Step {step_num}[/cyan]", style="bold")
+    
+    # Show reasoning
     if reasoning:
-        # Truncate for display
-        display = reasoning[:200] + "..." if len(reasoning) > 200 else reasoning
-        console.print(f"[dim]{display}[/dim]")
+        reasoning_display = reasoning[:800] + "..." if len(reasoning) > 800 else reasoning
+        console.print(f"[dim]💭 {reasoning_display}[/dim]")
+    
+    # Show executed code with syntax highlighting
+    if code and code.strip():
+        code_display = code[:2000] if len(code) > 2000 else code
+        console.print("\n[yellow]📝 Code:[/yellow]")
+        syntax = Syntax(code_display, "python", theme="monokai", line_numbers=False)
+        console.print(syntax)
+    
+    # Show output (truncated)
+    if output and output.strip():
+        output_display = output[:500] + "..." if len(output) > 500 else output
+        console.print(f"\n[green]📤 Output:[/green] [dim]{output_display}[/dim]")
 
 
 def print_info(message: str):
