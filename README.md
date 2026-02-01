@@ -45,6 +45,12 @@ No installation required. Run directly with npx:
 npx asyncreview review --url https://github.com/org/repo/pull/123 -q "Check for breaking changes"
 ```
 
+OR
+
+```bash
+npx skills add AsyncFuncAI/AsyncReview
+```
+
 ## Usage
 
 ### Public Repositories
@@ -82,9 +88,9 @@ For private repos, you also need a GitHub token.
 **Optional:**
 - **GitHub Token:** Required for private repositories to access file contents. Set as `GITHUB_TOKEN`.
 
-## For AI Agents
+## For Agents (Claude, Cursor, OpenCode, Gemini, Codex, etc.)
 
-AsyncReview is designed to be used as a **Skill** by other AI agents (like Claude Desktop or Gemini Code Assist). It allows them to "see" and "reason" about codebases they don't have local access to.
+AsyncReview is designed to be used as a **Skill** by other agentic providers. It allows them to "see" and "reason" about codebases they don't have local access to.
 
 ### ⚡️ Easiest Way: Install via Skills CLI
 
