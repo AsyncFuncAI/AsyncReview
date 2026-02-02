@@ -73,7 +73,7 @@ fi
 echo "==> Using Python: $SYS_PYTHON"
 # Create a temporary requirements file pointing to the python package
 cat > "$STAGE_DIR/pydeps_install.txt" <<EOF
-dspy>=3.1.2
+dspy>=2.6.27,<3.0.0
 rich>=13.0.0
 python-dotenv>=1.0.0
 httpx>=0.28.1
