@@ -70,12 +70,11 @@ cp -R "$ROOT_DIR/npx/python/cr" "$STAGE_DIR/app/python/"
 # Copy pyproject.toml so package detection works
 cp "$ROOT_DIR/npx/python/pyproject.toml" "$STAGE_DIR/app/python/"
 
-# 3) Install python deps into pydeps (no venv)
-echo "==> Installing python deps into pydeps/ (no venv)"
-# Find a working system python with pip (avoid venv issues)
-# Check python3 from PATH first (GitHub Actions sets this up), then homebrew, then system
+# 3) Bundle Python deps for instant start (+ requirements.txt as fallback if Python version mismatch)
+echo "==> Installing python deps into pydeps/ (bundled for instant start)"
+# Find a working system python with pip
 SYS_PYTHON=""
-for py in python3 python3.12 /opt/homebrew/opt/python@3.12/bin/python3.12 /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+for py in python3 python3.11 /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
   if command -v "$py" >/dev/null 2>&1 && "$py" -m pip --version >/dev/null 2>&1; then
     SYS_PYTHON="$py"
     break
@@ -86,15 +85,17 @@ if [ -z "$SYS_PYTHON" ]; then
   exit 1
 fi
 echo "==> Using Python: $SYS_PYTHON"
-# Create a temporary requirements file pointing to the python package
-cat > "$STAGE_DIR/pydeps_install.txt" <<EOF
+
+# Create requirements.txt (used as fallback if bundled deps fail)
+cat > "$STAGE_DIR/requirements.txt" <<EOF
 dspy>=3.1.2
 rich>=13.0.0
 python-dotenv>=1.0.0
 httpx>=0.28.1
 EOF
-"$SYS_PYTHON" -m pip install --break-system-packages --target "$STAGE_DIR/pydeps" -r "$STAGE_DIR/pydeps_install.txt"
-rm "$STAGE_DIR/pydeps_install.txt"
+
+# Bundle deps (instant start for matching Python versions)
+"$SYS_PYTHON" -m pip install --break-system-packages --target "$STAGE_DIR/pydeps" -r "$STAGE_DIR/requirements.txt"
 
 # 4) Download and bundle Deno (no runtime install scripts)
 echo "==> Downloading deno binary"
@@ -134,6 +135,36 @@ export PATH="$RUNTIME_ROOT/bin:$PATH"
 # Set up Python environment for when Node.js calls it
 export PYTHONPATH="$RUNTIME_ROOT/pydeps:$RUNTIME_ROOT/app/python"
 export DENO_DIR="${DENO_DIR:-$RUNTIME_ROOT/.deno_cache}"
+
+# Verify bundled Python deps work (may fail if Python version mismatches CI/CD build)
+# If they fail, reinstall with user's local pip
+DEPS_VERIFIED="$RUNTIME_ROOT/pydeps/.verified"
+if [ ! -f "$DEPS_VERIFIED" ]; then
+  # Find Python
+  PYTHON=""
+  for py in python3 python3.12 python3.11 /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+    if command -v "$py" >/dev/null 2>&1; then
+      PYTHON="$py"
+      break
+    fi
+  done
+  
+  if [ -z "$PYTHON" ]; then
+    echo "ERROR: Python 3 not found. Please install Python 3.11+." >&2
+    exit 1
+  fi
+  
+  # Test if bundled deps work (pydantic_core is the problematic one)
+  if ! PYTHONPATH="$RUNTIME_ROOT/pydeps" "$PYTHON" -c "import pydantic_core" 2>/dev/null; then
+    echo "📦 Reinstalling Python deps for your Python version (one-time)..."
+    rm -rf "$RUNTIME_ROOT/pydeps"/*
+    "$PYTHON" -m pip install --quiet --target "$RUNTIME_ROOT/pydeps" -r "$RUNTIME_ROOT/requirements.txt" 2>/dev/null || \
+    "$PYTHON" -m pip install --quiet --break-system-packages --target "$RUNTIME_ROOT/pydeps" -r "$RUNTIME_ROOT/requirements.txt"
+    echo "✅ Done"
+  fi
+  
+  touch "$DEPS_VERIFIED"
+fi
 
 # Run the Node.js CLI (which handles API keys, UI, and calls Python)
 exec node "$RUNTIME_ROOT/app/dist/index.js" "$@"
