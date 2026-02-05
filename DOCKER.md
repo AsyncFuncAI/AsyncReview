@@ -7,19 +7,28 @@ This guide explains how to run AsyncReview using Docker, both for production (im
 - **Docker** and **Docker Compose** installed on your machine.
 - A `.env` file with your API keys (see [README.md](README.md) or copy `.env.example`).
 
+**Note:** You *must* create a `.env` file before running any Docker commands.
+```bash
+cp .env.example .env
+# Edit .env and add your GEMINI_API_KEY
+```
+
 ## Quick Start (Production/User Mode)
 
-To run the application in a stable, immutable container environment:
+To run the application in a stable, immutable container environment using the convenience Makefile command:
 
-1. Ensure your `.env` file is populated.
-2. Run:
+```bash
+make docker-up
+```
 
+Alternatively, using Docker Compose directly:
 ```bash
 docker compose up --build
 ```
 
-- The Web UI will be available at: http://localhost:3000
-- The Backend API will be available at: http://localhost:8000
+- **Web UI:** http://localhost:3000
+- **API:** Proxied via the Web UI at http://localhost:3000/api
+  - Note: The backend service is not directly exposed to the host in production mode.
 
 To stop the application:
 ```bash
@@ -30,14 +39,17 @@ docker compose down
 
 To run the application in development mode with hot-reloading (changes to your code are immediately reflected):
 
-1. Run:
+```bash
+make docker-dev
+```
 
+Alternatively, using Docker Compose directly (requires both files):
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
-- The Web UI (Vite dev server) will be available at: http://localhost:5173
-- The Backend API (Uvicorn with reload) will be available at: http://localhost:8000
+- **Web UI:** http://localhost:5173 (Vite dev server)
+- **API:** http://localhost:8000 (Direct access for debugging)
 
 *Note: In development mode, the `web/` directory and the root directory are mounted into the containers. Changes you make locally will trigger reloads.*
 
