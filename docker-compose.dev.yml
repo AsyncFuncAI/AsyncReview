@@ -1,0 +1,22 @@
+services:
+  backend:
+    volumes:
+      - ./:/app
+      # Use anonymous volumes to prevent host directories from overwriting container directories
+      - /app/.venv
+      - /app/.deno
+    command: uvicorn cr.server:app --reload --host 0.0.0.0 --port 8000
+    environment:
+      - WATCHFILES_FORCE_POLLING=true
+
+  frontend:
+    build:
+      target: dev
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      - API_URL=http://backend:8000
+    command: npm run dev -- --host

@@ -1,0 +1,38 @@
+# Base image
+FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.cargo/bin:$PATH"
+
+# Install Deno
+ENV DENO_INSTALL="/root/.deno"
+RUN curl -fsSL https://deno.land/install.sh | sh
+ENV PATH="$DENO_INSTALL/bin:$PATH"
+
+# Set working directory
+WORKDIR /app
+
+# Copy project files
+COPY pyproject.toml README.md ./
+COPY cr/ ./cr/
+COPY cli/ ./cli/
+
+# Install python dependencies
+# We use --system to install into the container's system python environment
+RUN uv pip install --system .
+
+# Cache Deno dependencies
+RUN deno cache npm:pyodide/pyodide.js
+
+# Expose port
+EXPOSE 8000
+
+# Default command
+CMD ["uvicorn", "cr.server:app", "--host", "0.0.0.0", "--port", "8000"]
