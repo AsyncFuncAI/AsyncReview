@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
 
 # Install uv
 # explicit path to ensure it's available
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.5.29 /uv /bin/uv
 
 # Install Deno
 ENV DENO_INSTALL="/root/.deno"
