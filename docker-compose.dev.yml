@@ -1,5 +1,7 @@
 services:
   backend:
+    # Run as root in development to avoid permission issues with bind mounts
+    user: root
     volumes:
       - ./:/app
       # Use anonymous volumes to prevent host directories from overwriting container directories
@@ -12,6 +14,8 @@ services:
       - WATCHFILES_FORCE_POLLING=true
 
   frontend:
+    # Run as root in development to ensure node_modules write access and hot reloading
+    user: root
     build:
       target: dev
     volumes:
