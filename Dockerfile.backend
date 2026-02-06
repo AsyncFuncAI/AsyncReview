@@ -20,14 +20,21 @@ ENV PATH="$DENO_INSTALL/bin:$PATH"
 # Set working directory
 WORKDIR /app
 
-# Copy project files
+# Copy dependency definition only to leverage cache
 COPY pyproject.toml README.md ./
+
+# Compile and install dependencies
+# We generate requirements.txt from pyproject.toml and install it.
+# This step will be cached unless pyproject.toml changes.
+RUN uv pip compile pyproject.toml -o requirements.txt && \
+    uv pip install --system -r requirements.txt
+
+# Copy source code
 COPY cr/ ./cr/
 COPY cli/ ./cli/
 
-# Install python dependencies
-# We use --system to install into the container's system python environment
-RUN uv pip install --system .
+# Install the project itself (without reinstalling dependencies)
+RUN uv pip install --system --no-deps .
 
 # Cache Deno dependencies
 RUN deno cache npm:pyodide/pyodide.js
