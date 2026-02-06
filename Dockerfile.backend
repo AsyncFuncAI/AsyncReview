@@ -13,6 +13,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.5.29 /uv /bin/uv
 
 # Install Deno
 ENV DENO_INSTALL="/root/.deno"
+ENV DENO_VERSION="v1.40.3"
 RUN curl -fsSL https://deno.land/install.sh | sh
 ENV PATH="$DENO_INSTALL/bin:$PATH"
 
