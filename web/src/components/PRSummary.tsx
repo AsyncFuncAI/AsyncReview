@@ -104,7 +104,7 @@ export function PRSummary({ prInfo }: PRSummaryProps) {
                 {activeTab === 'commits' && (
                     <div className="pr-commits-timeline">
                         {prInfo.commitsList && prInfo.commitsList.length > 0 ? (
-                            prInfo.commitsList.map((commit, index) => (
+                            prInfo.commitsList.map((commit) => (
                                 <div key={commit.sha} className="timeline-item">
                                     {/* Line connecting items, except last one */}
                                     <div className="timeline-line"></div>
