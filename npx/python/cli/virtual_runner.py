@@ -1,6 +1,7 @@
 """Virtual review runner - runs RLM reviews on GitHub content without local repo."""
 
 import asyncio
+import concurrent.futures
 import logging
 import re
 from typing import Callable
@@ -22,6 +23,25 @@ from .github_fetcher import (
 from .local_fetcher import build_local_context, validate_local_path
 from .local_repo_tools import LocalRepoTools
 from .repo_tools import RepoTools
+
+
+def _sync_call(coro):
+    """Bridge async coroutines to sync using ThreadPoolExecutor.
+
+    DSPy RLM tools must be sync, but RepoTools/LocalRepoTools methods are async.
+    This helper runs async code in a thread pool.
+    """
+    loop = None
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop, create one
+        return asyncio.run(coro)
+
+    # We're in an async context, use thread pool to run the coroutine
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future = executor.submit(asyncio.run, coro)
+        return future.result()
 
 
 # Tool usage instructions for the model - simplified and clear
@@ -126,24 +146,131 @@ class VirtualReviewRunner:
     
     def _load_local_checklist(self, path: str) -> str:
         """Load a bundled checklist file from the CLI package.
-        
+
         Args:
             path: Path like 'checklists/solid-checklist.md'
-            
+
         Returns:
             Content of the checklist file, or error message if not found
         """
         from pathlib import Path
-        
+
         # Get the directory where this module is located
         cli_dir = Path(__file__).parent
         checklist_path = cli_dir / path
-        
+
         if checklist_path.exists():
             return checklist_path.read_text()
         else:
             return f"[Error] Checklist not found: {path}"
-    
+
+    def _sync_call(self, coro):
+        """Bridge async coroutines to sync using ThreadPoolExecutor.
+
+        DSPy RLM tools must be sync, but RepoTools/LocalRepoTools methods are async.
+        This helper runs the coroutine in a thread pool and returns the result.
+
+        Args:
+            coro: An async coroutine to execute
+
+        Returns:
+            The result of the coroutine
+        """
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(asyncio.run, coro)
+            return future.result()
+
+    def _create_tool_functions(self):
+        """Create sync tool wrapper functions for DSPy RLM.
+
+        Returns a list of three sync tool functions as closures that capture
+        self by reference (so self._repo_tools can change between review calls).
+
+        Returns:
+            List of [fetch_file, list_dir, search_code] functions
+        """
+        runner = self
+
+        def fetch_file(path: str) -> str:
+            """Fetch a file from the repository by path.
+
+            Handles both regular repository files and bundled checklist files.
+            Returns file content as a string, or an error message if the file
+            cannot be read.
+
+            Args:
+                path: File path (e.g., 'src/main.py' or 'checklists/solid-checklist.md')
+
+            Returns:
+                File content as string, or error message
+            """
+            if path.startswith("checklists/"):
+                return runner._load_local_checklist(path)
+            return runner._sync_call(runner._repo_tools.fetch_file(path))
+
+        def list_dir(path: str) -> str:
+            """List directory contents at the given path.
+
+            Returns a formatted text listing of files and directories,
+            showing path, type (file/dir), and size in bytes.
+
+            Args:
+                path: Directory path (e.g., 'src' or '')
+
+            Returns:
+                Formatted text listing of directory contents
+            """
+            entries = runner._sync_call(runner._repo_tools.list_directory(path))
+            if not entries:
+                return "[No entries]"
+
+            # Format as readable text
+            lines = []
+            for entry in entries:
+                if "error" in entry:
+                    lines.append(f"[Error] {entry['error']}")
+                else:
+                    entry_path = entry.get("path", "?")
+                    entry_type = entry.get("type", "?")
+                    entry_size = entry.get("size", 0)
+                    if entry_type == "dir":
+                        lines.append(f"[DIR]  {entry_path}")
+                    else:
+                        lines.append(f"[FILE] {entry_path} ({entry_size} bytes)")
+            return "\n".join(lines)
+
+        def search_code(query: str) -> str:
+            """Search for code patterns in the repository.
+
+            Searches for code content, filenames, or paths. Returns a formatted
+            text listing of matching files with code fragments.
+
+            Args:
+                query: Search query (e.g., 'enable_tool_optimization' or 'rlm.py')
+
+            Returns:
+                Formatted text listing of search results with file paths and fragments
+            """
+            results = runner._sync_call(runner._repo_tools.search_code(query))
+            if not results:
+                return "[No matches found]"
+
+            # Format as readable text
+            lines = []
+            for result in results:
+                path = result.get("path", "?")
+                fragment = result.get("fragment", "")
+                if fragment:
+                    # Truncate fragment if too long
+                    if len(fragment) > 100:
+                        fragment = fragment[:100] + "..."
+                    lines.append(f"{path}: {fragment}")
+                else:
+                    lines.append(f"{path}")
+            return "\n".join(lines)
+
+        return [fetch_file, list_dir, search_code]
+
     def _ensure_configured(self):
         """Configure DSPy and RLM on first use."""
         if self._configured:
