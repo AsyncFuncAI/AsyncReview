@@ -150,22 +150,25 @@ class LocalRepoTools:
     
     async def search_code(self, query: str) -> list[dict[str, Any]]:
         """Search for code patterns in the local repo using grep.
-        
+
         Returns paths + fragments. Soft-fails on error (returns []).
         """
         if not query or not query.strip():
             return []
-        
+
         query = query.strip()
-        
-        # Build grep command
-        extensions = " ".join(f"--include='*{ext}'" for ext in SEARCH_EXTENSIONS)
-        cmd = f"grep -rn {extensions} {query} {self.root_path}"
-        
+
+        # Build grep command as list (no shell=True to prevent shell injection)
+        args = ["grep", "-rn"]
+        for ext in SEARCH_EXTENSIONS:
+            args.append(f"--include=*{ext}")
+        args.append("--")  # End of options, prevents query from being interpreted as flag
+        args.append(query)
+        args.append(self.root_path)
+
         try:
             result = subprocess.run(
-                cmd,
-                shell=True,
+                args,
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -174,10 +177,10 @@ class LocalRepoTools:
             return []  # Soft fail
         except Exception:
             return []  # Soft fail
-        
+
         if result.returncode != 0:
             return []  # No matches or error
-        
+
         results = []
         for line in result.stdout.splitlines()[:10]:  # Limit to 10 results
             # Parse grep output: path:line:content
@@ -190,7 +193,7 @@ class LocalRepoTools:
                     "path": rel_path.replace(os.sep, "/"),
                     "fragment": fragment,
                 })
-        
+
         return results
     
     async def close(self):
