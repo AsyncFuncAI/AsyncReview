@@ -263,13 +263,9 @@ class VirtualReviewRunner:
             if isinstance(sources, str):
                 sources = [s.strip() for s in sources.split(",") if s.strip()]
 
-            # Handle on_step callback with trajectory if available
-            if self.on_step and hasattr(result, 'trajectory') and result.trajectory:
-                for i, step in enumerate(result.trajectory):
-                    reasoning = step.get('reasoning', '')
-                    code = step.get('code', '')
-                    output = step.get('output', '')
-                    self.on_step(i + 1, reasoning, code, output)
+            # Note: DSPy's verbose=True already shows step-by-step progress in real-time.
+            # Post-hoc trajectory replay via on_step is intentionally removed to avoid
+            # duplicate output (steps were being shown twice).
         finally:
             # Cleanup
             if self._repo_tools:
@@ -321,13 +317,9 @@ class VirtualReviewRunner:
             if isinstance(sources, str):
                 sources = [s.strip() for s in sources.split(",") if s.strip()]
 
-            # Handle on_step callback with trajectory if available
-            if self.on_step and hasattr(result, 'trajectory') and result.trajectory:
-                for i, step in enumerate(result.trajectory):
-                    reasoning = step.get('reasoning', '')
-                    code = step.get('code', '')
-                    output = step.get('output', '')
-                    self.on_step(i + 1, reasoning, code, output)
+            # Note: DSPy's verbose=True already shows step-by-step progress in real-time.
+            # Post-hoc trajectory replay via on_step is intentionally removed to avoid
+            # duplicate output (steps were being shown twice).
         finally:
             # Cleanup
             if self._repo_tools:
