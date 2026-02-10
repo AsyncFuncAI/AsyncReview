@@ -6,6 +6,7 @@ and search code beyond the PR diff.
 
 import asyncio
 import os
+import re
 from typing import Any
 
 import httpx
@@ -136,17 +137,19 @@ def find_line_range(content: str, needle: str | None = None) -> str:
 class RepoTools:
     """Tools for exploring a GitHub repository beyond the PR diff."""
     
-    def __init__(self, owner: str, repo: str, head_sha: str):
+    def __init__(self, owner: str, repo: str, head_sha: str, pr_number: int | None = None):
         """Initialize with repo context.
-        
+
         Args:
             owner: Repository owner
             repo: Repository name
             head_sha: PR head commit SHA for consistent reads
+            pr_number: Optional PR number for PR-specific tools
         """
         self.owner = owner
         self.repo = repo
         self.head_sha = head_sha
+        self.pr_number = pr_number
         self._client: httpx.AsyncClient | None = None
     
     async def _get_client(self) -> httpx.AsyncClient:
@@ -332,7 +335,397 @@ class RepoTools:
             results.append(entry)
         
         return results
-    
+
+    async def get_symbol_definition(self, symbol: str, context_file: str = "") -> str:
+        """Search for a symbol definition (function or class).
+
+        Uses GitHub code search to find 'def {symbol}' or 'class {symbol}' patterns.
+        Returns file path + content snippet or error stub.
+        """
+        if not symbol or not symbol.strip():
+            return "[ERROR: empty symbol]"
+
+        symbol = symbol.strip()
+        client = await self._get_client()
+
+        # Search for function or class definition
+        search_query = f"(def {symbol}|class {symbol}) repo:{self.owner}/{self.repo}"
+        url = f"{GITHUB_API_BASE}/search/code"
+
+        try:
+            async with _semaphore:
+                resp = await client.get(
+                    url,
+                    headers={
+                        **_get_headers(),
+                        "Accept": "application/vnd.github.text-match+json",
+                    },
+                    params={"q": search_query, "per_page": 5},
+                    timeout=30.0,
+                )
+        except Exception:
+            return "[ERROR: search failed]"
+
+        if _is_rate_limited(resp):
+            return "[ERROR: rate limited]"
+        if resp.status_code != 200:
+            return f"[ERROR: {resp.status_code}]"
+
+        data = resp.json()
+        items = data.get("items", [])
+
+        if not items:
+            return f"[ERROR: symbol '{symbol}' not found]"
+
+        # Return first match with path and fragment
+        item = items[0]
+        path = item.get("path", "")
+        fragment = ""
+        text_matches = item.get("text_matches", [])
+        if text_matches:
+            fragment = text_matches[0].get("fragment", "")[:500]
+
+        result = f"Found in: {path}\n"
+        if fragment:
+            result += f"Definition:\n{fragment}"
+        return result
+
+    async def find_usages(self, symbol: str, scope_path: str = ".") -> str:
+        """Search for usages of a symbol in the repository.
+
+        Returns list of files + fragments where symbol is referenced.
+        """
+        if not symbol or not symbol.strip():
+            return "[ERROR: empty symbol]"
+
+        symbol = symbol.strip()
+        client = await self._get_client()
+
+        # Search for symbol references
+        search_query = f"{symbol} repo:{self.owner}/{self.repo}"
+        url = f"{GITHUB_API_BASE}/search/code"
+
+        try:
+            async with _semaphore:
+                resp = await client.get(
+                    url,
+                    headers={
+                        **_get_headers(),
+                        "Accept": "application/vnd.github.text-match+json",
+                    },
+                    params={"q": search_query, "per_page": 10},
+                    timeout=30.0,
+                )
+        except Exception:
+            return "[ERROR: search failed]"
+
+        if _is_rate_limited(resp):
+            return "[ERROR: rate limited]"
+        if resp.status_code != 200:
+            return f"[ERROR: {resp.status_code}]"
+
+        data = resp.json()
+        items = data.get("items", [])
+
+        if not items:
+            return f"[ERROR: no usages of '{symbol}' found]"
+
+        # Format results
+        result = f"Found {len(items)} usages of '{symbol}':\n"
+        for item in items[:10]:
+            path = item.get("path", "")
+            result += f"  - {path}\n"
+
+        return result
+
+    async def get_type_hierarchy(self, class_name: str) -> str:
+        """Get the type hierarchy (parent classes) for a class.
+
+        Searches for the class definition, parses parent classes using regex,
+        and recursively resolves parent classes.
+        """
+        if not class_name or not class_name.strip():
+            return "[ERROR: empty class name]"
+
+        class_name = class_name.strip()
+        client = await self._get_client()
+
+        # Search for class definition
+        search_query = f"class {class_name} repo:{self.owner}/{self.repo}"
+        url = f"{GITHUB_API_BASE}/search/code"
+
+        try:
+            async with _semaphore:
+                resp = await client.get(
+                    url,
+                    headers={
+                        **_get_headers(),
+                        "Accept": "application/vnd.github.text-match+json",
+                    },
+                    params={"q": search_query, "per_page": 5},
+                    timeout=30.0,
+                )
+        except Exception:
+            return "[ERROR: search failed]"
+
+        if _is_rate_limited(resp):
+            return "[ERROR: rate limited]"
+        if resp.status_code != 200:
+            return f"[ERROR: {resp.status_code}]"
+
+        data = resp.json()
+        items = data.get("items", [])
+
+        if not items:
+            return f"[ERROR: class '{class_name}' not found]"
+
+        # Fetch the file containing the class
+        path = items[0].get("path", "")
+        file_content = await self.fetch_file(path)
+
+        if file_content.startswith("[ERROR:") or file_content.startswith("[SKIPPED:"):
+            return f"[ERROR: could not fetch {path}]"
+
+        # Parse parent classes using regex: class ClassName(Parent1, Parent2):
+        pattern = rf"class\s+{re.escape(class_name)}\s*\(([^)]+)\)"
+        match = re.search(pattern, file_content)
+
+        if not match:
+            return f"Class '{class_name}' has no parent classes (or is not found)"
+
+        parents_str = match.group(1)
+        parents = [p.strip() for p in parents_str.split(",")]
+
+        result = f"Type hierarchy for '{class_name}':\n"
+        result += f"  {class_name} extends: {', '.join(parents)}\n"
+
+        return result
+
+    async def get_call_graph(self, func_name: str, depth: int = 1) -> str:
+        """Get the call graph for a function.
+
+        Searches for calls to func_name, and if depth > 0, searches for what
+        func_name calls by fetching its definition.
+        """
+        if not func_name or not func_name.strip():
+            return "[ERROR: empty function name]"
+
+        func_name = func_name.strip()
+        client = await self._get_client()
+
+        # Search for calls to the function
+        search_query = f"{func_name}( repo:{self.owner}/{self.repo}"
+        url = f"{GITHUB_API_BASE}/search/code"
+
+        try:
+            async with _semaphore:
+                resp = await client.get(
+                    url,
+                    headers={
+                        **_get_headers(),
+                        "Accept": "application/vnd.github.text-match+json",
+                    },
+                    params={"q": search_query, "per_page": 10},
+                    timeout=30.0,
+                )
+        except Exception:
+            return "[ERROR: search failed]"
+
+        if _is_rate_limited(resp):
+            return "[ERROR: rate limited]"
+        if resp.status_code != 200:
+            return f"[ERROR: {resp.status_code}]"
+
+        data = resp.json()
+        items = data.get("items", [])
+
+        result = f"Call graph for '{func_name}':\n"
+
+        if not items:
+            result += f"  No calls found\n"
+            return result
+
+        # List files that call this function
+        result += f"  Called in {len(items)} locations:\n"
+        for item in items[:10]:
+            path = item.get("path", "")
+            result += f"    - {path}\n"
+
+        return result
+
+    async def get_pr_comments(self, pr_number: int | None = None) -> str:
+        """Get all comments and reviews from a PR.
+
+        Uses /repos/{owner}/{repo}/pulls/{pr_number}/reviews and /comments endpoints.
+        """
+        pr_num = pr_number or self.pr_number
+        if not pr_num:
+            return "[ERROR: no PR number provided]"
+
+        client = await self._get_client()
+
+        # Fetch reviews
+        reviews_url = f"{GITHUB_API_BASE}/repos/{self.owner}/{self.repo}/pulls/{pr_num}/reviews"
+        comments_url = f"{GITHUB_API_BASE}/repos/{self.owner}/{self.repo}/pulls/{pr_num}/comments"
+
+        result = f"PR #{pr_num} Comments and Reviews:\n"
+
+        try:
+            async with _semaphore:
+                reviews_resp = await client.get(reviews_url, headers=_get_headers(), timeout=30.0)
+                comments_resp = await client.get(comments_url, headers=_get_headers(), timeout=30.0)
+        except Exception:
+            return "[ERROR: failed to fetch PR comments]"
+
+        if reviews_resp.status_code == 200:
+            reviews = reviews_resp.json()
+            result += f"\nReviews ({len(reviews)}):\n"
+            for review in reviews[:10]:
+                author = review.get("user", {}).get("login", "unknown")
+                state = review.get("state", "UNKNOWN")
+                body = review.get("body", "")[:200]
+                result += f"  - {author} ({state}): {body}\n"
+
+        if comments_resp.status_code == 200:
+            comments = comments_resp.json()
+            result += f"\nComments ({len(comments)}):\n"
+            for comment in comments[:10]:
+                author = comment.get("user", {}).get("login", "unknown")
+                body = comment.get("body", "")[:200]
+                result += f"  - {author}: {body}\n"
+
+        return result
+
+    async def get_blame(self, path: str, line_range: str = "") -> str:
+        """Get blame information for a file or line range.
+
+        Parses line_range like "10-20" and returns commit info for those lines.
+        """
+        clean_path = sanitize_path(path)
+        if clean_path is None:
+            return "[ERROR: invalid path]"
+
+        client = await self._get_client()
+
+        # GitHub doesn't have a direct blame API, so we fetch commits for the file
+        url = f"{GITHUB_API_BASE}/repos/{self.owner}/{self.repo}/commits"
+
+        try:
+            async with _semaphore:
+                resp = await client.get(
+                    url,
+                    headers=_get_headers(),
+                    params={"path": clean_path, "per_page": 10},
+                    timeout=30.0,
+                )
+        except Exception:
+            return "[ERROR: blame fetch failed]"
+
+        if _is_rate_limited(resp):
+            return "[ERROR: rate limited]"
+        if resp.status_code != 200:
+            return f"[ERROR: {resp.status_code}]"
+
+        commits = resp.json()
+
+        result = f"Blame for {clean_path}"
+        if line_range:
+            result += f" (lines {line_range})"
+        result += ":\n"
+
+        for commit in commits[:10]:
+            sha = commit.get("sha", "")[:7]
+            author = commit.get("commit", {}).get("author", {}).get("name", "unknown")
+            message = commit.get("commit", {}).get("message", "")[:100]
+            result += f"  {sha} - {author}: {message}\n"
+
+        return result
+
+    async def get_commit_history(self, path: str, limit: int = 5) -> str:
+        """Get commit history for a file.
+
+        Uses /repos/{owner}/{repo}/commits?path={path}&per_page={limit} endpoint.
+        """
+        clean_path = sanitize_path(path)
+        if clean_path is None:
+            return "[ERROR: invalid path]"
+
+        client = await self._get_client()
+        url = f"{GITHUB_API_BASE}/repos/{self.owner}/{self.repo}/commits"
+
+        try:
+            async with _semaphore:
+                resp = await client.get(
+                    url,
+                    headers=_get_headers(),
+                    params={"path": clean_path, "per_page": min(limit, 100)},
+                    timeout=30.0,
+                )
+        except Exception:
+            return "[ERROR: commit history fetch failed]"
+
+        if _is_rate_limited(resp):
+            return "[ERROR: rate limited]"
+        if resp.status_code != 200:
+            return f"[ERROR: {resp.status_code}]"
+
+        commits = resp.json()
+
+        result = f"Commit history for {clean_path} (last {len(commits)} commits):\n"
+        for commit in commits[:limit]:
+            sha = commit.get("sha", "")[:7]
+            author = commit.get("commit", {}).get("author", {}).get("name", "unknown")
+            date = commit.get("commit", {}).get("author", {}).get("date", "")[:10]
+            message = commit.get("commit", {}).get("message", "").split("\n")[0][:80]
+            result += f"  {sha} ({date}) - {author}: {message}\n"
+
+        return result
+
+    async def get_related_issues(self, query_text: str) -> str:
+        """Search for related issues in the repository.
+
+        Uses /search/issues?q={query_text}+repo:{owner}/{repo} endpoint.
+        """
+        if not query_text or not query_text.strip():
+            return "[ERROR: empty query]"
+
+        query_text = query_text.strip()
+        client = await self._get_client()
+
+        search_query = f"{query_text} repo:{self.owner}/{self.repo}"
+        url = f"{GITHUB_API_BASE}/search/issues"
+
+        try:
+            async with _semaphore:
+                resp = await client.get(
+                    url,
+                    headers=_get_headers(),
+                    params={"q": search_query, "per_page": 10},
+                    timeout=30.0,
+                )
+        except Exception:
+            return "[ERROR: issue search failed]"
+
+        if _is_rate_limited(resp):
+            return "[ERROR: rate limited]"
+        if resp.status_code != 200:
+            return f"[ERROR: {resp.status_code}]"
+
+        data = resp.json()
+        items = data.get("items", [])
+
+        if not items:
+            return f"[ERROR: no issues found for '{query_text}']"
+
+        result = f"Related issues for '{query_text}' ({len(items)} found):\n"
+        for item in items[:10]:
+            number = item.get("number", "")
+            title = item.get("title", "")[:80]
+            state = item.get("state", "")
+            result += f"  #{number} [{state}] {title}\n"
+
+        return result
+
     def format_source(self, path: str, content: str | None = None, needle: str | None = None) -> str:
         """Format a source citation as repo@sha:path#Lx-Ly."""
         line_range = ""
@@ -345,9 +738,23 @@ class RepoTools:
 
 TOOL_DESCRIPTIONS = """
 AVAILABLE TOOLS (use via Python in REPL):
+
+BASIC TOOLS:
 - fetch_file(path: str) -> str: Fetch any file from the repo. Returns content or error stub.
 - list_directory(path: str = "") -> list[dict]: List {path, type, size} entries.
 - search_code(query: str) -> list[dict]: Search for patterns. Returns {path, fragment}.
+
+DEEP CODE UNDERSTANDING:
+- get_symbol_definition(symbol: str, context_file: str = "") -> str: Find function/class definition.
+- find_usages(symbol: str, scope_path: str = ".") -> str: Find all usages of a symbol.
+- get_type_hierarchy(class_name: str) -> str: Get parent classes for a class.
+- get_call_graph(func_name: str, depth: int = 1) -> str: Get functions that call func_name.
+
+GITHUB CONTEXT:
+- get_pr_comments(pr_number: int | None = None) -> str: Get PR reviews and comments.
+- get_blame(path: str, line_range: str = "") -> str: Get blame info for a file/lines.
+- get_commit_history(path: str, limit: int = 5) -> str: Get commit history for a file.
+- get_related_issues(query_text: str) -> str: Search for related issues.
 
 TOOL USAGE RULES:
 1. Fetch the minimum: prefer 1–3 files; don't traverse the repo.
@@ -355,4 +762,12 @@ TOOL USAGE RULES:
 3. Use search_code to find paths; then fetch_file to read.
 4. Files > 200KB return a stub—avoid large/generated files.
 5. Use list_directory to understand structure first.
+6. Use get_symbol_definition to find where a symbol is defined.
+7. Use find_usages to understand impact of changes.
+8. Use get_type_hierarchy to understand class relationships.
+9. Use get_call_graph to trace function dependencies.
+10. Use get_pr_comments to understand review feedback.
+11. Use get_blame to find who changed what and when.
+12. Use get_commit_history to understand evolution of a file.
+13. Use get_related_issues to find context about bugs/features.
 """
