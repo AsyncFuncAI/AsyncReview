@@ -101,7 +101,8 @@ class LocalRepoTools:
         
         Returns structured entries: [{path, type, size}]
         """
-        abs_path = self._resolve_path(path) if path else self.root_path
+        # Treat ".", "./", "/" same as "" (root directory)
+        abs_path = self._resolve_path(path) if path and path.strip() not in (".", "./", "/") else self.root_path
         if abs_path is None:
             return [{"error": "invalid path"}]
         
