@@ -19,6 +19,8 @@ from .github_fetcher import (
     fetch_issue,
     build_review_context,
 )
+from .local_fetcher import build_local_context, validate_local_path
+from .local_repo_tools import LocalRepoTools
 from .repo_tools import RepoTools
 
 
@@ -235,7 +237,50 @@ class VirtualReviewRunner:
         }
         
         return answer, sources, metadata
-    
+
+    async def review_local(self, path: str, question: str) -> tuple[str, list[str], dict]:
+        """Review a local directory.
+
+        Args:
+            path: Local directory path (relative or absolute)
+            question: Question to ask about the code
+
+        Returns:
+            Tuple of (answer, sources, metadata)
+        """
+        # Validate and resolve path
+        abs_path = validate_local_path(path)
+
+        # Create local repo tools
+        local_tools = LocalRepoTools(abs_path)
+        self._repo_tools = local_tools
+        self._repo_files = {}
+        self._repo_dirs = {}
+        self._search_results = []
+
+        # Build context from local directory
+        context = build_local_context(abs_path)
+
+        # Run RLM
+        self._ensure_configured()
+
+        try:
+            answer, sources = await self._run_rlm_with_tools(context, question)
+        finally:
+            # Cleanup
+            if self._repo_tools:
+                await self._repo_tools.close()
+                self._repo_tools = None
+
+        metadata = {
+            "type": "local",
+            "path": abs_path,
+            "model": self.model,
+            "files_fetched": list(self._repo_files.keys()),
+        }
+
+        return answer, sources, metadata
+
     async def _process_tool_requests(self, output: str) -> bool:
         """Parse output for tool requests and execute them.
         
