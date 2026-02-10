@@ -93,11 +93,11 @@ class VirtualReviewRunner:
     def _create_tool_functions(self):
         """Create sync tool wrapper functions for DSPy RLM.
 
-        Returns a list of three sync tool functions as closures that capture
+        Returns a dict of three sync tool functions as closures that capture
         self by reference (so self._repo_tools can change between review calls).
 
         Returns:
-            List of [fetch_file, list_dir, search_code] functions
+            Dict mapping tool name to function: {fetch_file, list_dir, search_code}
         """
         runner = self
 
@@ -179,7 +179,7 @@ class VirtualReviewRunner:
                     lines.append(f"{path}")
             return "\n".join(lines)
 
-        return [fetch_file, list_dir, search_code]
+        return {"fetch_file": fetch_file, "list_dir": list_dir, "search_code": search_code}
 
     def _ensure_configured(self):
         """Configure DSPy and RLM on first use."""
