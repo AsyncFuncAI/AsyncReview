@@ -93,13 +93,12 @@ class VirtualReviewRunner:
     def _create_tool_functions(self):
         """Create sync tool wrapper functions for DSPy RLM.
 
-        Returns a list of sync tool functions as closures that capture
+        Returns a dict of {name: func} sync tool functions as closures that capture
         self by reference (so self._repo_tools can change between review calls).
-        DSPy RLM expects tools as list[Callable] (function names are inferred
-        from __name__, docs from __doc__).
+        DSPy RLM expects tools as dict[str, Callable[..., str]].
 
         Returns:
-            List of callable tool functions.
+            Dict mapping tool names to callable tool functions.
         """
         runner = self
 
@@ -297,19 +296,19 @@ class VirtualReviewRunner:
             """
             return runner._sync_call(runner._repo_tools.get_related_issues(query_text))
 
-        return [
-            fetch_file,
-            list_dir,
-            search_code,
-            get_symbol_definition,
-            find_usages,
-            get_type_hierarchy,
-            get_call_graph,
-            get_pr_comments,
-            get_blame,
-            get_commit_history,
-            get_related_issues,
-        ]
+        return {
+            "fetch_file": fetch_file,
+            "list_dir": list_dir,
+            "search_code": search_code,
+            "get_symbol_definition": get_symbol_definition,
+            "find_usages": find_usages,
+            "get_type_hierarchy": get_type_hierarchy,
+            "get_call_graph": get_call_graph,
+            "get_pr_comments": get_pr_comments,
+            "get_blame": get_blame,
+            "get_commit_history": get_commit_history,
+            "get_related_issues": get_related_issues,
+        }
 
     def _ensure_configured(self):
         """Configure DSPy and RLM on first use."""
