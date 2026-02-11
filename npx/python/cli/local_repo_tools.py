@@ -365,8 +365,8 @@ class LocalRepoTools:
         parents = []
         if match:
             parent_str = match.group(1)
-            # Strip whitespace and newlines from each parent
-            parents = [p.strip() for p in parent_str.split(",")]
+            # Strip whitespace and newlines from each parent, filter out empty strings
+            parents = [p.strip() for p in parent_str.split(",") if p.strip()]
 
         hierarchy = f"Type hierarchy for '{class_name}':\n"
         hierarchy += f"  {class_name} extends: {', '.join(parents) if parents else '(no parents)'}\n"
