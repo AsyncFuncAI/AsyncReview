@@ -212,14 +212,22 @@ class LocalRepoTools:
         if "." in symbol:
             symbol = symbol.rsplit(".", 1)[-1]
 
-        # Build grep command to find definitions
-        args = ["grep", "-rn"]
+        # Build grep command to find definitions. Use extended regex to allow OR.
+        args = ["grep", "-Ern"]
         for ext in SEARCH_EXTENSIONS:
             args.append(f"--include=*{ext}")
         args.append("--")
-        # Search for "def symbol" or "class symbol"
-        args.append(f"(def|class) {symbol}")
-        args.append(self.root_path)
+        # Search for "def symbol" or "class symbol" as a standalone identifier.
+        symbol_pattern = rf"(def|class)\s+{re.escape(symbol)}\b"
+        args.append(symbol_pattern)
+
+        # Narrow search scope when context_file is provided.
+        if context_file and context_file.strip():
+            context_dir = os.path.dirname(context_file.strip())
+            scope_abs = self._resolve_path(context_dir) if context_dir else self.root_path
+            args.append(scope_abs if scope_abs else self.root_path)
+        else:
+            args.append(self.root_path)
 
         try:
             result = subprocess.run(
@@ -767,4 +775,3 @@ class LocalRepoTools:
         if content:
             line_range = find_line_range(content, needle)
         return f"local:{path}{line_range}"
-

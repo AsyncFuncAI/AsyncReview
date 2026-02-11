@@ -5,6 +5,7 @@ and search code beyond the PR diff.
 """
 
 import asyncio
+import logging
 import os
 import re
 from typing import Any
@@ -23,6 +24,7 @@ BACKOFF_BASE = 1  # seconds
 # --- State (per-run) ---
 _file_cache: dict[tuple[str, str], str] = {}  # (ref, path) -> content
 _semaphore = asyncio.Semaphore(5)  # Max 5 concurrent GitHub calls
+logger = logging.getLogger(__name__)
 
 
 def _get_headers() -> dict[str, str]:
@@ -316,9 +318,7 @@ class RepoTools:
         url = f"{GITHUB_API_BASE}/search/code"
         
         # Debug logging for bundled mode troubleshooting
-        print(f"[DEBUG-SEARCH] Query: '{search_query}'")
-        print(f"[DEBUG-SEARCH] URL: {url}")
-        print(f"[DEBUG-SEARCH] GITHUB_TOKEN present: {bool(GITHUB_TOKEN)}")
+        logger.debug("search_code query=%r url=%s token_present=%s", search_query, url, bool(GITHUB_TOKEN))
         
         try:
             async with _semaphore:
@@ -331,16 +331,16 @@ class RepoTools:
                     params={"q": search_query, "per_page": 10},
                     timeout=30.0,
                 )
-            print(f"[DEBUG-SEARCH] Response status: {resp.status_code}")
+            logger.debug("search_code response_status=%s", resp.status_code)
         except Exception as e:
-            print(f"[DEBUG-SEARCH] Exception: {e}")
+            logger.debug("search_code exception=%s", e)
             return []  # Soft fail
         
         if _is_rate_limited(resp):
-            print(f"[DEBUG-SEARCH] Rate limited!")
+            logger.debug("search_code rate_limited")
             return []
         if resp.status_code != 200:
-            print(f"[DEBUG-SEARCH] Non-200 response: {resp.text[:500]}")
+            logger.debug("search_code non_200=%s body=%r", resp.status_code, resp.text[:500])
             return []  # Soft fail
         
         data = resp.json()
@@ -374,46 +374,26 @@ class RepoTools:
             symbol = symbol.rsplit(".", 1)[-1]
         client = await self._get_client()
 
-        # Build search query with optional path qualifier
-        base_query = f"(def {symbol}|class {symbol}) repo:{self.owner}/{self.repo}"
+        # Build search queries with optional path qualifier.
+        # Avoid regex-like OR expressions because GitHub code search expects
+        # query syntax, not raw regex.
+        def_query = f"def {symbol} repo:{self.owner}/{self.repo}"
+        class_query = f"class {symbol} repo:{self.owner}/{self.repo}"
 
         # If context_file is provided, extract directory and try scoped search first
         context_dir = ""
         if context_file and context_file.strip():
             context_dir = os.path.dirname(context_file).strip()
 
-        # Try with path qualifier if context_dir is available
-        if context_dir:
-            search_query = f"{base_query} path:{context_dir}"
-        else:
-            search_query = base_query
-
         url = f"{GITHUB_API_BASE}/search/code"
+        queries: list[str] = []
+        if context_dir:
+            queries.extend([f"{def_query} path:{context_dir}", f"{class_query} path:{context_dir}"])
+        queries.extend([def_query, class_query])
 
-        try:
-            async with _semaphore:
-                resp = await client.get(
-                    url,
-                    headers={
-                        **_get_headers(),
-                        "Accept": "application/vnd.github.text-match+json",
-                    },
-                    params={"q": search_query, "per_page": 5},
-                    timeout=30.0,
-                )
-        except Exception:
-            return "[ERROR: search failed]"
-
-        if _is_rate_limited(resp):
-            return "[ERROR: rate limited]"
-        if resp.status_code != 200:
-            return f"[ERROR: {resp.status_code}]"
-
-        data = resp.json()
-        items = data.get("items", [])
-
-        # If no results with path qualifier, fall back to repo-wide search
-        if not items and context_dir:
+        items: list[dict[str, Any]] = []
+        last_status: int | None = None
+        for search_query in queries:
             try:
                 async with _semaphore:
                     resp = await client.get(
@@ -422,17 +402,26 @@ class RepoTools:
                             **_get_headers(),
                             "Accept": "application/vnd.github.text-match+json",
                         },
-                        params={"q": base_query, "per_page": 5},
+                        params={"q": search_query, "per_page": 5},
                         timeout=30.0,
                     )
             except Exception:
                 return "[ERROR: search failed]"
 
-            if not _is_rate_limited(resp) and resp.status_code == 200:
-                data = resp.json()
-                items = data.get("items", [])
+            if _is_rate_limited(resp):
+                return "[ERROR: rate limited]"
+            if resp.status_code != 200:
+                last_status = resp.status_code
+                continue
+
+            data = resp.json()
+            items = data.get("items", [])
+            if items:
+                break
 
         if not items:
+            if last_status is not None:
+                return f"[ERROR: {last_status}]"
             return f"[ERROR: symbol '{symbol}' not found]"
 
         # Return first match with path and fragment
@@ -656,7 +645,7 @@ class RepoTools:
         client = await self._get_client()
 
         # Search for calls to the function
-        search_query = f"{func_name}( repo:{self.owner}/{self.repo}"
+        search_query = f"\"{func_name}(\" repo:{self.owner}/{self.repo}"
         url = f"{GITHUB_API_BASE}/search/code"
 
         try:
