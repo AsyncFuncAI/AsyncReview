@@ -93,11 +93,12 @@ class VirtualReviewRunner:
     def _create_tool_functions(self):
         """Create sync tool wrapper functions for DSPy RLM.
 
-        Returns a dict of three sync tool functions as closures that capture
+        Returns a dict of {name: func} sync tool functions as closures that capture
         self by reference (so self._repo_tools can change between review calls).
+        DSPy RLM expects tools as dict[str, Callable[..., str]].
 
         Returns:
-            Dict mapping tool name to function: {fetch_file, list_dir, search_code}
+            Dict mapping tool names to callable tool functions.
         """
         runner = self
 
@@ -179,7 +180,135 @@ class VirtualReviewRunner:
                     lines.append(f"{path}")
             return "\n".join(lines)
 
-        return {"fetch_file": fetch_file, "list_dir": list_dir, "search_code": search_code}
+        def get_symbol_definition(symbol: str, context_file: str = "") -> str:
+            """Find the definition of a symbol (function or class).
+
+            Searches for 'def {symbol}' or 'class {symbol}' patterns in the repository.
+            Returns the file path and code snippet where the symbol is defined.
+
+            Args:
+                symbol: Symbol name to search for (e.g., 'MyClass' or 'my_function')
+                context_file: Optional file path — narrows search to that file's directory
+
+            Returns:
+                File path and code snippet, or error message
+            """
+            return runner._sync_call(runner._repo_tools.get_symbol_definition(symbol, context_file))
+
+        def find_usages(symbol: str, scope_path: str = ".") -> str:
+            """Find all usages of a symbol in the repository.
+
+            Searches for references to the given symbol across all files.
+            Returns a list of files where the symbol is used.
+
+            Args:
+                symbol: Symbol name to search for
+                scope_path: Narrows search to files under this path
+
+            Returns:
+                List of files containing usages, or error message
+            """
+            return runner._sync_call(runner._repo_tools.find_usages(symbol, scope_path))
+
+        def get_type_hierarchy(class_name: str) -> str:
+            """Get the type hierarchy (parent classes) for a class.
+
+            Searches for the class definition and extracts parent class information.
+            Returns the inheritance chain for the given class.
+
+            Args:
+                class_name: Name of the class to analyze
+
+            Returns:
+                Type hierarchy information, or error message
+            """
+            return runner._sync_call(runner._repo_tools.get_type_hierarchy(class_name))
+
+        def get_call_graph(func_name: str, depth: int = 1) -> str:
+            """Get the call graph for a function.
+
+            Searches for all locations where the function is called.
+            Returns a list of files and locations that call the function.
+
+            Args:
+                func_name: Name of the function to analyze
+                depth: Controls outgoing edge resolution (what the function calls)
+
+            Returns:
+                Call graph information, or error message
+            """
+            return runner._sync_call(runner._repo_tools.get_call_graph(func_name, depth))
+
+        def get_pr_comments(pr_number: int = 0) -> str:
+            """Get all comments and reviews from a PR.
+
+            Fetches reviews and comments from the PR associated with this review.
+            Returns formatted list of reviews and comments.
+
+            Args:
+                pr_number: PR number (optional, uses PR from current review if not provided)
+
+            Returns:
+                Formatted list of PR comments and reviews, or error message
+            """
+            return runner._sync_call(runner._repo_tools.get_pr_comments(pr_number if pr_number else None))
+
+        def get_blame(path: str, line_range: str = "") -> str:
+            """Get blame information for a file or line range.
+
+            Returns commit information for the specified file or line range,
+            showing who changed what and when. line_range filters commits to those touching the specified lines.
+
+            Args:
+                path: File path to get blame for
+                line_range: Optional line range (e.g., '10-20') — filters to commits touching those lines
+
+            Returns:
+                Blame information with commit details, or error message
+            """
+            return runner._sync_call(runner._repo_tools.get_blame(path, line_range))
+
+        def get_commit_history(path: str, limit: int = 5) -> str:
+            """Get commit history for a file.
+
+            Returns the recent commits that modified the specified file.
+
+            Args:
+                path: File path to get history for
+                limit: Maximum number of commits to return (default: 5)
+
+            Returns:
+                Commit history with dates and messages, or error message
+            """
+            return runner._sync_call(runner._repo_tools.get_commit_history(path, limit))
+
+        def get_related_issues(query_text: str) -> str:
+            """Search for related issues in the repository.
+
+            Searches for issues matching the given query text.
+            Returns a list of related issues.
+
+            Args:
+                query_text: Search query for finding related issues
+
+            Returns:
+                List of related issues, or error message
+            """
+            return runner._sync_call(runner._repo_tools.get_related_issues(query_text))
+
+        return {
+            "fetch_file": fetch_file,
+            "list_dir": list_dir,
+            "search_code": search_code,
+            "get_symbol_definition": get_symbol_definition,
+            "find_usages": find_usages,
+            "get_type_hierarchy": get_type_hierarchy,
+            "get_call_graph": get_call_graph,
+            "get_pr_comments": get_pr_comments,
+            "get_blame": get_blame,
+            "get_commit_history": get_commit_history,
+            "get_related_issues": get_related_issues,
+        }
 
     def _ensure_configured(self):
         """Configure DSPy and RLM on first use."""
@@ -244,8 +373,9 @@ class VirtualReviewRunner:
         # Get head SHA for PR (for consistent file reads)
         head_sha = data.get("head_sha", "HEAD")
 
-        # Create repo tools for this review
-        self._repo_tools = RepoTools(owner, repo, head_sha)
+        # Create repo tools for this review, passing pr_number if this is a PR
+        pr_number = number if url_type == "pr" else None
+        self._repo_tools = RepoTools(owner, repo, head_sha, pr_number=pr_number)
 
         # Build context from PR data
         context = build_review_context(data)

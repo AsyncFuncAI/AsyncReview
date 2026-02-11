@@ -114,6 +114,8 @@ async def run_review(
     try:
         answer, sources, metadata = await runner.review(url, actual_question)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print_error(f"Review failed: {e}")
         sys.exit(1)
     
@@ -199,6 +201,8 @@ async def run_local_review(
     try:
         answer, sources, metadata = await runner.review_local(abs_path, actual_question)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print_error(f"Review failed: {e}")
         sys.exit(1)
 
