@@ -188,7 +188,7 @@ class VirtualReviewRunner:
 
             Args:
                 symbol: Symbol name to search for (e.g., 'MyClass' or 'my_function')
-                context_file: Optional file path to prioritize (currently unused)
+                context_file: Optional file path — narrows search to that file's directory
 
             Returns:
                 File path and code snippet, or error message
@@ -203,7 +203,7 @@ class VirtualReviewRunner:
 
             Args:
                 symbol: Symbol name to search for
-                scope_path: Optional scope path (currently unused)
+                scope_path: Narrows search to files under this path
 
             Returns:
                 List of files containing usages, or error message
@@ -232,7 +232,7 @@ class VirtualReviewRunner:
 
             Args:
                 func_name: Name of the function to analyze
-                depth: Depth of call graph traversal (currently unused)
+                depth: Controls outgoing edge resolution (what the function calls)
 
             Returns:
                 Call graph information, or error message
@@ -257,11 +257,11 @@ class VirtualReviewRunner:
             """Get blame information for a file or line range.
 
             Returns commit information for the specified file or line range,
-            showing who changed what and when.
+            showing who changed what and when. line_range filters commits to those touching the specified lines.
 
             Args:
                 path: File path to get blame for
-                line_range: Optional line range (e.g., '10-20')
+                line_range: Optional line range (e.g., '10-20') — filters to commits touching those lines
 
             Returns:
                 Blame information with commit details, or error message

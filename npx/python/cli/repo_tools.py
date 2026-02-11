@@ -1092,17 +1092,19 @@ BASIC TOOLS:
 - list_directory(path: str = "") -> list[dict]: List {path, type, size} entries.
 - search_code(query: str) -> list[dict]: Search for patterns. Returns {path, fragment}.
 
-DEEP CODE UNDERSTANDING:
-- get_symbol_definition(symbol: str, context_file: str = "") -> str: Find function/class definition.
-- find_usages(symbol: str, scope_path: str = ".") -> str: Find all usages of a symbol.
-- get_type_hierarchy(class_name: str) -> str: Get parent classes for a class.
-- get_call_graph(func_name: str, depth: int = 1) -> str: Get functions that call func_name.
+CODE SEARCH & ANALYSIS:
+- get_symbol_definition(symbol: str, context_file: str = "") -> str: Find function/class definition. Uses text search; context_file narrows to that directory.
+- find_usages(symbol: str, scope_path: str = ".") -> str: Find all usages of a symbol. scope_path narrows search to a directory.
+- get_type_hierarchy(class_name: str) -> str: Get parent classes for a class. Resolves one level of parents.
+- get_call_graph(func_name: str, depth: int = 1) -> str: Get callers and outgoing calls for a function. depth controls outgoing edge resolution.
 
 GITHUB CONTEXT:
 - get_pr_comments(pr_number: int | None = None) -> str: Get PR reviews and comments.
-- get_blame(path: str, line_range: str = "") -> str: Get blame info for a file/lines.
+- get_blame(path: str, line_range: str = "") -> str: Get blame info for a file. line_range filters to commits touching those lines.
 - get_commit_history(path: str, limit: int = 5) -> str: Get commit history for a file.
 - get_related_issues(query_text: str) -> str: Search for related issues.
+
+NOTE: Code search tools use text-pattern matching, not AST analysis. Results may include matches in comments or strings.
 
 TOOL USAGE RULES:
 1. Fetch the minimum: prefer 1–3 files; don't traverse the repo.
