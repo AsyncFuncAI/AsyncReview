@@ -340,6 +340,7 @@ class RepoTools:
         """Search for a symbol definition (function or class).
 
         Uses GitHub code search to find 'def {symbol}' or 'class {symbol}' patterns.
+        When context_file is provided, prioritizes results from that directory.
         Returns file path + content snippet or error stub.
         """
         if not symbol or not symbol.strip():
@@ -348,8 +349,20 @@ class RepoTools:
         symbol = symbol.strip()
         client = await self._get_client()
 
-        # Search for function or class definition
-        search_query = f"(def {symbol}|class {symbol}) repo:{self.owner}/{self.repo}"
+        # Build search query with optional path qualifier
+        base_query = f"(def {symbol}|class {symbol}) repo:{self.owner}/{self.repo}"
+
+        # If context_file is provided, extract directory and try scoped search first
+        context_dir = ""
+        if context_file and context_file.strip():
+            context_dir = os.path.dirname(context_file).strip()
+
+        # Try with path qualifier if context_dir is available
+        if context_dir:
+            search_query = f"{base_query} path:{context_dir}"
+        else:
+            search_query = base_query
+
         url = f"{GITHUB_API_BASE}/search/code"
 
         try:
@@ -374,6 +387,26 @@ class RepoTools:
         data = resp.json()
         items = data.get("items", [])
 
+        # If no results with path qualifier, fall back to repo-wide search
+        if not items and context_dir:
+            try:
+                async with _semaphore:
+                    resp = await client.get(
+                        url,
+                        headers={
+                            **_get_headers(),
+                            "Accept": "application/vnd.github.text-match+json",
+                        },
+                        params={"q": base_query, "per_page": 5},
+                        timeout=30.0,
+                    )
+            except Exception:
+                return "[ERROR: search failed]"
+
+            if not _is_rate_limited(resp) and resp.status_code == 200:
+                data = resp.json()
+                items = data.get("items", [])
+
         if not items:
             return f"[ERROR: symbol '{symbol}' not found]"
 
@@ -393,6 +426,7 @@ class RepoTools:
     async def find_usages(self, symbol: str, scope_path: str = ".") -> str:
         """Search for usages of a symbol in the repository.
 
+        When scope_path is provided and not ".", narrows search to that path.
         Returns list of files + fragments where symbol is referenced.
         """
         if not symbol or not symbol.strip():
@@ -401,8 +435,13 @@ class RepoTools:
         symbol = symbol.strip()
         client = await self._get_client()
 
-        # Search for symbol references
+        # Build search query with optional path qualifier
         search_query = f"{symbol} repo:{self.owner}/{self.repo}"
+
+        # Add path qualifier if scope_path is provided and not "."
+        if scope_path and scope_path.strip() and scope_path.strip() != ".":
+            search_query = f"{search_query} path:{scope_path.strip()}"
+
         url = f"{GITHUB_API_BASE}/search/code"
 
         try:
@@ -543,15 +582,132 @@ class RepoTools:
 
         if not items:
             result += f"  No calls found\n"
-            return result
+        else:
+            # List files that call this function
+            result += f"  Called in {len(items)} locations:\n"
+            for item in items[:10]:
+                path = item.get("path", "")
+                result += f"    - {path}\n"
 
-        # List files that call this function
-        result += f"  Called in {len(items)} locations:\n"
-        for item in items[:10]:
-            path = item.get("path", "")
-            result += f"    - {path}\n"
+        # If depth >= 1, find outgoing calls from this function
+        if depth >= 1:
+            outgoing = await self._get_outgoing_calls(func_name)
+            if outgoing:
+                result += f"\n  Calls (outgoing):\n"
+                for call in outgoing:
+                    result += f"    - {call}\n"
+            else:
+                result += f"\n  Calls (outgoing): none found\n"
 
         return result
+
+    async def _get_outgoing_calls(self, func_name: str) -> list[str]:
+        """Extract outgoing calls from a function definition.
+
+        Returns list of function names called by func_name.
+        """
+        # Python keywords to filter out
+        keywords = {
+            "if", "for", "while", "return", "print", "range", "len", "str",
+            "int", "list", "dict", "set", "tuple", "type", "isinstance",
+            "hasattr", "getattr", "setattr", "super", "enumerate", "zip",
+            "map", "filter", "sorted", "reversed", "any", "all", "min",
+            "max", "sum", "abs", "round", "open", "format", "repr", "hash",
+            "id", "input", "next", "iter"
+        }
+
+        # Search for function definition
+        search_query = f"def {func_name} repo:{self.owner}/{self.repo}"
+        url = f"{GITHUB_API_BASE}/search/code"
+
+        client = await self._get_client()
+
+        try:
+            async with _semaphore:
+                resp = await client.get(
+                    url,
+                    headers={
+                        **_get_headers(),
+                        "Accept": "application/vnd.github.text-match+json",
+                    },
+                    params={"q": search_query, "per_page": 5},
+                    timeout=30.0,
+                )
+        except Exception:
+            return []
+
+        if _is_rate_limited(resp) or resp.status_code != 200:
+            return []
+
+        data = resp.json()
+        items = data.get("items", [])
+
+        if not items:
+            return []
+
+        # Fetch the file containing the function
+        path = items[0].get("path", "")
+        file_content = await self.fetch_file(path)
+
+        if file_content.startswith("[ERROR:") or file_content.startswith("[SKIPPED:"):
+            return []
+
+        # Extract function body
+        func_body = self._extract_function_body(file_content, func_name)
+        if not func_body:
+            return []
+
+        # Find all function calls using regex: word followed by (
+        pattern = r"\b(\w+)\s*\("
+        matches = re.findall(pattern, func_body)
+
+        # Filter out keywords and duplicates
+        calls = []
+        seen = set()
+        for match in matches:
+            if match not in keywords and match not in seen:
+                calls.append(match)
+                seen.add(match)
+
+        return calls[:10]  # Limit to 10 results
+
+    def _extract_function_body(self, content: str, func_name: str) -> str:
+        """Extract the body of a function from file content.
+
+        Returns the function body as a string, or empty string if not found.
+        """
+        lines = content.splitlines()
+        func_start = None
+
+        # Find the function definition line
+        for i, line in enumerate(lines):
+            if re.match(rf"def\s+{re.escape(func_name)}\s*\(", line):
+                func_start = i
+                break
+
+        if func_start is None:
+            return ""
+
+        # Get the indentation level of the function definition
+        def_line = lines[func_start]
+        def_indent = len(def_line) - len(def_line.lstrip())
+
+        # Extract lines until we hit a line with same or less indentation (next function/class)
+        body_lines = [def_line]
+        for i in range(func_start + 1, len(lines)):
+            line = lines[i]
+            # Skip empty lines
+            if not line.strip():
+                body_lines.append(line)
+                continue
+            # Check indentation
+            line_indent = len(line) - len(line.lstrip())
+            if line_indent <= def_indent and line.strip():
+                # Hit next function/class at same level
+                break
+            body_lines.append(line)
+
+        return "\n".join(body_lines)
 
     async def get_pr_comments(self, pr_number: int | None = None) -> str:
         """Get all comments and reviews from a PR.
