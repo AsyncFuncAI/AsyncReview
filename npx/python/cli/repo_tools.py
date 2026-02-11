@@ -526,19 +526,88 @@ class RepoTools:
             return f"[ERROR: could not fetch {path}]"
 
         # Parse parent classes using regex: class ClassName(Parent1, Parent2):
+        # Use re.DOTALL to handle multi-line class definitions
         pattern = rf"class\s+{re.escape(class_name)}\s*\(([^)]+)\)"
-        match = re.search(pattern, file_content)
+        match = re.search(pattern, file_content, re.DOTALL)
 
         if not match:
             return f"Class '{class_name}' has no parent classes (or is not found)"
 
         parents_str = match.group(1)
+        # Strip whitespace and newlines from each parent
         parents = [p.strip() for p in parents_str.split(",")]
 
         result = f"Type hierarchy for '{class_name}':\n"
         result += f"  {class_name} extends: {', '.join(parents)}\n"
 
+        # Resolve one level of parent classes
+        result += "  Parent details:\n"
+        for parent in parents:
+            parent_hierarchy = await self._resolve_parent_class(parent)
+            if parent_hierarchy:
+                result += f"    {parent_hierarchy}\n"
+            else:
+                result += f"    {parent} (no parents found)\n"
+
         return result
+
+    async def _resolve_parent_class(self, parent_name: str) -> str | None:
+        """Resolve one level of parent class hierarchy.
+
+        Searches for the parent class definition and extracts its parents.
+        Returns a string like "ParentClass extends: GrandParent" or None if not found.
+        """
+        if not parent_name or not parent_name.strip():
+            return None
+
+        parent_name = parent_name.strip()
+        client = await self._get_client()
+
+        # Search for parent class definition
+        search_query = f"class {parent_name} repo:{self.owner}/{self.repo}"
+        url = f"{GITHUB_API_BASE}/search/code"
+
+        try:
+            async with _semaphore:
+                resp = await client.get(
+                    url,
+                    headers={
+                        **_get_headers(),
+                        "Accept": "application/vnd.github.text-match+json",
+                    },
+                    params={"q": search_query, "per_page": 5},
+                    timeout=30.0,
+                )
+        except Exception:
+            return None
+
+        if _is_rate_limited(resp) or resp.status_code != 200:
+            return None
+
+        data = resp.json()
+        items = data.get("items", [])
+
+        if not items:
+            return None
+
+        # Fetch the file containing the parent class
+        path = items[0].get("path", "")
+        file_content = await self.fetch_file(path)
+
+        if file_content.startswith("[ERROR:") or file_content.startswith("[SKIPPED:"):
+            return None
+
+        # Parse parent classes of the parent class
+        pattern = rf"class\s+{re.escape(parent_name)}\s*\(([^)]+)\)"
+        match = re.search(pattern, file_content, re.DOTALL)
+
+        if not match:
+            return None
+
+        parents_str = match.group(1)
+        grandparents = [p.strip() for p in parents_str.split(",")]
+
+        return f"{parent_name} extends: {', '.join(grandparents)}"
 
     async def get_call_graph(self, func_name: str, depth: int = 1) -> str:
         """Get the call graph for a function.
@@ -752,10 +821,72 @@ class RepoTools:
 
         return result
 
+    def _parse_line_range(self, line_range: str) -> tuple[int, int] | None:
+        """Parse line range from "10-20" or "10,20" format.
+
+        Returns (start, end) tuple or None if parsing fails.
+        """
+        if not line_range or not line_range.strip():
+            return None
+
+        line_range = line_range.strip()
+
+        # Try "10-20" format
+        if "-" in line_range:
+            parts = line_range.split("-")
+            if len(parts) == 2:
+                try:
+                    start = int(parts[0].strip())
+                    end = int(parts[1].strip())
+                    if start > 0 and end > 0 and start <= end:
+                        return (start, end)
+                except ValueError:
+                    pass
+
+        # Try "10,20" format
+        if "," in line_range:
+            parts = line_range.split(",")
+            if len(parts) == 2:
+                try:
+                    start = int(parts[0].strip())
+                    end = int(parts[1].strip())
+                    if start > 0 and end > 0 and start <= end:
+                        return (start, end)
+                except ValueError:
+                    pass
+
+        return None
+
+    def _patch_touches_lines(self, patch: str, start_line: int, end_line: int) -> bool:
+        """Check if a unified diff patch touches the given line range.
+
+        Parses @@ -start,count +start,count @@ headers to determine
+        if the patch modifies lines in the requested range.
+        """
+        if not patch:
+            return False
+
+        # Find all hunk headers: @@ -start,count +start,count @@
+        # The second number is the line range in the new file
+        hunk_pattern = r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@"
+
+        for match in re.finditer(hunk_pattern, patch):
+            hunk_start = int(match.group(1))
+            hunk_count = int(match.group(2)) if match.group(2) else 1
+            hunk_end = hunk_start + hunk_count - 1
+
+            # Check if this hunk overlaps with the requested range
+            if hunk_start <= end_line and hunk_end >= start_line:
+                return True
+
+        return False
+
     async def get_blame(self, path: str, line_range: str = "") -> str:
         """Get blame information for a file or line range.
 
-        Parses line_range like "10-20" and returns commit info for those lines.
+        Parses line_range like "10-20" or "10,20" and returns commit info
+        for commits that touched those lines. If line_range is empty,
+        returns recent commits for the entire file.
         """
         clean_path = sanitize_path(path)
         if clean_path is None:
@@ -784,16 +915,77 @@ class RepoTools:
 
         commits = resp.json()
 
-        result = f"Blame for {clean_path}"
-        if line_range:
-            result += f" (lines {line_range})"
-        result += ":\n"
+        # If no line_range specified, return all recent commits
+        if not line_range or not line_range.strip():
+            result = f"Blame for {clean_path} (recent commits):\n"
+            for commit in commits[:10]:
+                sha = commit.get("sha", "")[:7]
+                author = commit.get("commit", {}).get("author", {}).get("name", "unknown")
+                message = commit.get("commit", {}).get("message", "")[:100]
+                result += f"  {sha} - {author}: {message}\n"
+            return result
 
+        # Parse line_range
+        parsed_range = self._parse_line_range(line_range)
+        if parsed_range is None:
+            # Parsing failed - fall back to all commits with a note
+            result = f"Blame for {clean_path} (invalid line range '{line_range}', showing recent commits):\n"
+            for commit in commits[:10]:
+                sha = commit.get("sha", "")[:7]
+                author = commit.get("commit", {}).get("author", {}).get("name", "unknown")
+                message = commit.get("commit", {}).get("message", "")[:100]
+                result += f"  {sha} - {author}: {message}\n"
+            return result
+
+        start_line, end_line = parsed_range
+
+        # Filter commits to those that touched the requested line range
+        matching_commits = []
         for commit in commits[:10]:
-            sha = commit.get("sha", "")[:7]
-            author = commit.get("commit", {}).get("author", {}).get("name", "unknown")
-            message = commit.get("commit", {}).get("message", "")[:100]
-            result += f"  {sha} - {author}: {message}\n"
+            sha = commit.get("sha", "")
+
+            # Fetch commit details to get the patch
+            commit_url = f"{GITHUB_API_BASE}/repos/{self.owner}/{self.repo}/commits/{sha}"
+            try:
+                async with _semaphore:
+                    commit_resp = await client.get(
+                        commit_url,
+                        headers=_get_headers(),
+                        timeout=30.0,
+                    )
+            except Exception:
+                # If we can't fetch commit details, skip it
+                continue
+
+            if _is_rate_limited(commit_resp):
+                # Rate limited - return what we have so far
+                break
+            if commit_resp.status_code != 200:
+                # Skip this commit
+                continue
+
+            commit_data = commit_resp.json()
+            files = commit_data.get("files", [])
+
+            # Check if any file in this commit touches our line range
+            for file_info in files:
+                if file_info.get("filename") == clean_path:
+                    patch = file_info.get("patch", "")
+                    if self._patch_touches_lines(patch, start_line, end_line):
+                        matching_commits.append(commit)
+                    break
+
+        # Format result
+        result = f"Blame for {clean_path} (lines {line_range}):\n"
+
+        if not matching_commits:
+            result += f"  No commits found that touched lines {line_range}\n"
+        else:
+            for commit in matching_commits:
+                sha = commit.get("sha", "")[:7]
+                author = commit.get("commit", {}).get("author", {}).get("name", "unknown")
+                message = commit.get("commit", {}).get("message", "")[:100]
+                result += f"  {sha} - {author}: {message}\n"
 
         return result
 

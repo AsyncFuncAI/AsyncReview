@@ -6,6 +6,7 @@ instead of GitHub API. Enables RLM to explore local files during review.
 
 import asyncio
 import os
+import re
 import subprocess
 from typing import Any
 
@@ -305,7 +306,7 @@ class LocalRepoTools:
     async def get_type_hierarchy(self, class_name: str) -> str:
         """Get the type hierarchy (parent classes) for a class.
 
-        Finds class definition and parses parent classes.
+        Finds class definition and parses parent classes, including one level of parent resolution.
         """
         if not class_name or not class_name.strip():
             return "[ERROR: empty class name]"
@@ -347,24 +348,102 @@ class LocalRepoTools:
 
         file_path = parts[0]
         line_num = parts[1]
-        definition = parts[2]
         rel_path = os.path.relpath(file_path, self.root_path)
 
-        # Extract parent classes from "class X(Parent1, Parent2):" pattern
+        # Read the actual file and apply regex to full content to handle multi-line defs
         import re
-        match = re.search(r"class\s+\w+\s*\((.*?)\)", definition)
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                file_content = f.read()
+        except Exception:
+            return f"[ERROR: could not read {rel_path}]"
+
+        # Extract parent classes from "class X(Parent1, Parent2):" pattern
+        # Use re.DOTALL to handle multi-line class definitions
+        pattern = rf"class\s+{re.escape(class_name)}\s*\(([^)]+)\)"
+        match = re.search(pattern, file_content, re.DOTALL)
         parents = []
         if match:
             parent_str = match.group(1)
+            # Strip whitespace and newlines from each parent
             parents = [p.strip() for p in parent_str.split(",")]
 
-        hierarchy = f"local:{rel_path}#L{line_num}\n"
-        hierarchy += f"class {class_name}"
-        if parents:
-            hierarchy += f"({', '.join(parents)})"
-        hierarchy += ":"
+        hierarchy = f"Type hierarchy for '{class_name}':\n"
+        hierarchy += f"  {class_name} extends: {', '.join(parents) if parents else '(no parents)'}\n"
+        hierarchy += f"  Parent details:\n"
+
+        # Resolve one level of parent classes
+        for parent in parents:
+            parent_info = await self._resolve_parent_class_local(parent)
+            if parent_info:
+                hierarchy += f"    {parent_info}\n"
+            else:
+                hierarchy += f"    {parent} (no parents found)\n"
 
         return hierarchy
+
+    async def _resolve_parent_class_local(self, parent_name: str) -> str | None:
+        """Resolve one level of parent class hierarchy in local filesystem.
+
+        Searches for the parent class definition and extracts its parents.
+        Returns a string like "ParentClass extends: GrandParent" or None if not found.
+        """
+        if not parent_name or not parent_name.strip():
+            return None
+
+        parent_name = parent_name.strip()
+
+        # Find parent class definition
+        args = ["grep", "-rn"]
+        for ext in SEARCH_EXTENSIONS:
+            args.append(f"--include=*{ext}")
+        args.append("--")
+        args.append(f"class {parent_name}")
+        args.append(self.root_path)
+
+        try:
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (subprocess.TimeoutExpired, Exception):
+            return None
+
+        if result.returncode != 0:
+            return None
+
+        lines = result.stdout.splitlines()
+        if not lines:
+            return None
+
+        first_match = lines[0]
+        parts = first_match.split(":", 2)
+        if len(parts) < 3:
+            return None
+
+        file_path = parts[0]
+
+        # Read the actual file and apply regex to full content
+        import re
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                file_content = f.read()
+        except Exception:
+            return None
+
+        # Extract parent classes of the parent class
+        pattern = rf"class\s+{re.escape(parent_name)}\s*\(([^)]+)\)"
+        match = re.search(pattern, file_content, re.DOTALL)
+
+        if not match:
+            return None
+
+        parent_str = match.group(1)
+        grandparents = [p.strip() for p in parent_str.split(",")]
+
+        return f"{parent_name} extends: {', '.join(grandparents)}"
 
     async def get_call_graph(self, func_name: str, depth: int = 1) -> str:
         """Get the call graph for a function (functions it calls and callers).
@@ -445,7 +524,94 @@ class LocalRepoTools:
         else:
             result_str += "\n\nNo callers found"
 
+        # If depth >= 1, find outgoing calls from this function
+        if depth >= 1:
+            outgoing = await self._get_outgoing_calls(file_path, func_name)
+            if outgoing:
+                result_str += f"\n\nCalls (outgoing):\n" + "\n".join(f"  {call}" for call in outgoing)
+            else:
+                result_str += "\n\nCalls (outgoing): none found"
+
         return result_str
+
+    async def _get_outgoing_calls(self, file_path: str, func_name: str) -> list[str]:
+        """Extract outgoing calls from a function definition.
+
+        Returns list of function names called by func_name.
+        """
+        # Python keywords to filter out
+        keywords = {
+            "if", "for", "while", "return", "print", "range", "len", "str",
+            "int", "list", "dict", "set", "tuple", "type", "isinstance",
+            "hasattr", "getattr", "setattr", "super", "enumerate", "zip",
+            "map", "filter", "sorted", "reversed", "any", "all", "min",
+            "max", "sum", "abs", "round", "open", "format", "repr", "hash",
+            "id", "input", "next", "iter"
+        }
+
+        # Read the file
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception:
+            return []
+
+        # Extract function body
+        func_body = self._extract_function_body(content, func_name)
+        if not func_body:
+            return []
+
+        # Find all function calls using regex: word followed by (
+        pattern = r"\b(\w+)\s*\("
+        matches = re.findall(pattern, func_body)
+
+        # Filter out keywords and duplicates
+        calls = []
+        seen = set()
+        for match in matches:
+            if match not in keywords and match not in seen:
+                calls.append(match)
+                seen.add(match)
+
+        return calls[:10]  # Limit to 10 results
+
+    def _extract_function_body(self, content: str, func_name: str) -> str:
+        """Extract the body of a function from file content.
+
+        Returns the function body as a string, or empty string if not found.
+        """
+        lines = content.splitlines()
+        func_start = None
+
+        # Find the function definition line
+        for i, line in enumerate(lines):
+            if re.match(rf"def\s+{re.escape(func_name)}\s*\(", line):
+                func_start = i
+                break
+
+        if func_start is None:
+            return ""
+
+        # Get the indentation level of the function definition
+        def_line = lines[func_start]
+        def_indent = len(def_line) - len(def_line.lstrip())
+
+        # Extract lines until we hit a line with same or less indentation (next function/class)
+        body_lines = [def_line]
+        for i in range(func_start + 1, len(lines)):
+            line = lines[i]
+            # Skip empty lines
+            if not line.strip():
+                body_lines.append(line)
+                continue
+            # Check indentation
+            line_indent = len(line) - len(line.lstrip())
+            if line_indent <= def_indent and line.strip():
+                # Hit next function/class at same level
+                break
+            body_lines.append(line)
+
+        return "\n".join(body_lines)
 
     async def get_pr_comments(self, pr_number: int) -> str:
         """Get PR comments (not available in local mode)."""
