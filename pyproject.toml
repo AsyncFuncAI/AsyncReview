@@ -31,14 +31,13 @@ dev = [
 
 [project.scripts]
 cr = "cr.cli:main"
-asyncreview = "cli.main:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["cr", "cli"]
+packages = ["cr"]
 
 [tool.ruff]
 line-length = 100

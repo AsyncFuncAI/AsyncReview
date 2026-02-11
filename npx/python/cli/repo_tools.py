@@ -151,16 +151,38 @@ class RepoTools:
         self.head_sha = head_sha
         self.pr_number = pr_number
         self._client: httpx.AsyncClient | None = None
-    
+        self._client_loop: asyncio.AbstractEventLoop | None = None
+
     async def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None:
+        """Return an httpx AsyncClient, event-loop-aware.
+
+        Tool calls are bridged via _sync_call → asyncio.run(), which creates a
+        new event loop each time. A client cached from a previous event loop
+        cannot be safely reused. This method detects loop changes and recreates
+        the client when needed, while caching within the same loop (useful when
+        a single tool call invokes _get_client multiple times, e.g.
+        get_call_graph → _get_outgoing_calls).
+        """
+        loop = asyncio.get_running_loop()
+        if self._client is None or self._client_loop is not loop:
+            # Close stale client from a previous event loop
+            if self._client is not None:
+                try:
+                    await self._client.aclose()
+                except Exception:
+                    pass
             self._client = httpx.AsyncClient()
+            self._client_loop = loop
         return self._client
-    
+
     async def close(self):
         if self._client:
-            await self._client.aclose()
+            try:
+                await self._client.aclose()
+            except Exception:
+                pass
             self._client = None
+            self._client_loop = None
     
     async def fetch_file(self, path: str) -> str:
         """Fetch any file from the repo at the PR's head commit.
@@ -347,6 +369,9 @@ class RepoTools:
             return "[ERROR: empty symbol]"
 
         symbol = symbol.strip()
+        # Extract simple name from dotted paths (e.g., "dspy.adapters.DataFrame" -> "DataFrame")
+        if "." in symbol:
+            symbol = symbol.rsplit(".", 1)[-1]
         client = await self._get_client()
 
         # Build search query with optional path qualifier
@@ -433,6 +458,9 @@ class RepoTools:
             return "[ERROR: empty symbol]"
 
         symbol = symbol.strip()
+        # Extract simple name from dotted paths (e.g., "dspy.predict.rlm.RLM" -> "RLM")
+        if "." in symbol:
+            symbol = symbol.rsplit(".", 1)[-1]
         client = await self._get_client()
 
         # Build search query with optional path qualifier
@@ -487,6 +515,9 @@ class RepoTools:
             return "[ERROR: empty class name]"
 
         class_name = class_name.strip()
+        # Extract simple name from dotted paths (e.g., "dspy.adapters.DataFrame" -> "DataFrame")
+        if "." in class_name:
+            class_name = class_name.rsplit(".", 1)[-1]
         client = await self._get_client()
 
         # Search for class definition
@@ -619,6 +650,9 @@ class RepoTools:
             return "[ERROR: empty function name]"
 
         func_name = func_name.strip()
+        # Extract simple name from dotted paths (e.g., "module.sub.my_func" -> "my_func")
+        if "." in func_name:
+            func_name = func_name.rsplit(".", 1)[-1]
         client = await self._get_client()
 
         # Search for calls to the function
@@ -684,6 +718,10 @@ class RepoTools:
             "max", "sum", "abs", "round", "open", "format", "repr", "hash",
             "id", "input", "next", "iter"
         }
+
+        # Extract simple name from dotted paths
+        if "." in func_name:
+            func_name = func_name.rsplit(".", 1)[-1]
 
         # Search for function definition
         search_query = f"def {func_name} repo:{self.owner}/{self.repo}"

@@ -208,6 +208,9 @@ class LocalRepoTools:
             return "[ERROR: empty symbol]"
 
         symbol = symbol.strip()
+        # Extract simple name from dotted paths (e.g., "dspy.adapters.DataFrame" -> "DataFrame")
+        if "." in symbol:
+            symbol = symbol.rsplit(".", 1)[-1]
 
         # Build grep command to find definitions
         args = ["grep", "-rn"]
@@ -258,6 +261,9 @@ class LocalRepoTools:
             return "[ERROR: empty symbol]"
 
         symbol = symbol.strip()
+        # Extract simple name from dotted paths (e.g., "dspy.predict.rlm.RLM" -> "RLM")
+        if "." in symbol:
+            symbol = symbol.rsplit(".", 1)[-1]
 
         # Resolve scope path
         scope_abs = self._resolve_path(scope_path) if scope_path != "." else self.root_path
@@ -312,6 +318,9 @@ class LocalRepoTools:
             return "[ERROR: empty class name]"
 
         class_name = class_name.strip()
+        # Extract simple name from dotted paths (e.g., "dspy.adapters.DataFrame" -> "DataFrame")
+        if "." in class_name:
+            class_name = class_name.rsplit(".", 1)[-1]
 
         # Find class definition
         args = ["grep", "-rn"]
@@ -454,6 +463,9 @@ class LocalRepoTools:
             return "[ERROR: empty function name]"
 
         func_name = func_name.strip()
+        # Extract simple name from dotted paths (e.g., "module.sub.my_func" -> "my_func")
+        if "." in func_name:
+            func_name = func_name.rsplit(".", 1)[-1]
 
         # Find function definition
         args = ["grep", "-rn"]
@@ -539,6 +551,10 @@ class LocalRepoTools:
 
         Returns list of function names called by func_name.
         """
+        # Extract simple name from dotted paths
+        if "." in func_name:
+            func_name = func_name.rsplit(".", 1)[-1]
+
         # Python keywords to filter out
         keywords = {
             "if", "for", "while", "return", "print", "range", "len", "str",
