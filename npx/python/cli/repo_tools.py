@@ -534,8 +534,8 @@ class RepoTools:
             return f"Class '{class_name}' has no parent classes (or is not found)"
 
         parents_str = match.group(1)
-        # Strip whitespace and newlines from each parent
-        parents = [p.strip() for p in parents_str.split(",")]
+        # Strip whitespace and newlines from each parent, filter out empty strings
+        parents = [p.strip() for p in parents_str.split(",") if p.strip()]
 
         result = f"Type hierarchy for '{class_name}':\n"
         result += f"  {class_name} extends: {', '.join(parents)}\n"
@@ -605,7 +605,7 @@ class RepoTools:
             return None
 
         parents_str = match.group(1)
-        grandparents = [p.strip() for p in parents_str.split(",")]
+        grandparents = [p.strip() for p in parents_str.split(",") if p.strip()]
 
         return f"{parent_name} extends: {', '.join(grandparents)}"
 

@@ -441,7 +441,7 @@ class LocalRepoTools:
             return None
 
         parent_str = match.group(1)
-        grandparents = [p.strip() for p in parent_str.split(",")]
+        grandparents = [p.strip() for p in parent_str.split(",") if p.strip()]
 
         return f"{parent_name} extends: {', '.join(grandparents)}"
 
