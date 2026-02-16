@@ -161,17 +161,18 @@ class VirtualReviewRunner:
         
         # Configure DSPy with specified model (cache=False to prevent disk caching)
         model_name = self.model
-        if not model_name.startswith("gemini/"):
+        # Only add gemini/ prefix if no provider prefix exists (no / in name)
+        if "/" not in model_name:
             model_name = f"gemini/{model_name}"
-        
+
         self._lm = dspy.LM(model_name, cache=False)
-        
+
         # Create RLM with custom interpreter that has Deno 2.x fix
         deno_command = build_deno_command()
         interpreter = PythonInterpreter(deno_command=deno_command)
-        
-        # Standard signature
-        sub_model = f"gemini/{SUB_MODEL}" if not SUB_MODEL.startswith("gemini/") else SUB_MODEL
+
+        # Standard signature - same prefix logic for sub model
+        sub_model = SUB_MODEL if "/" in SUB_MODEL else f"gemini/{SUB_MODEL}"
         self._rlm = dspy.RLM(
             signature="context, question -> answer, sources",
             max_iterations=MAX_ITERATIONS,

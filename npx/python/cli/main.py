@@ -19,6 +19,7 @@ import asyncio
 import sys
 
 from rich.console import Console
+from rich.markup import escape as rich_escape
 from rich.panel import Panel
 from rich.markdown import Markdown
 
@@ -41,7 +42,7 @@ def print_step(step_num: int, reasoning: str, code: str, output: str = ""):
     # Show reasoning
     if reasoning:
         reasoning_display = reasoning[:800] + "..." if len(reasoning) > 800 else reasoning
-        console.print(f"[dim]💭 {reasoning_display}[/dim]")
+        console.print(f"[dim]💭 {rich_escape(reasoning_display)}[/dim]")
     
     # Show executed code with syntax highlighting
     if code and code.strip():
@@ -53,17 +54,17 @@ def print_step(step_num: int, reasoning: str, code: str, output: str = ""):
     # Show output (truncated)
     if output and output.strip():
         output_display = output[:500] + "..." if len(output) > 500 else output
-        console.print(f"\n[green]📤 Output:[/green] [dim]{output_display}[/dim]")
+        console.print(f"\n[green]📤 Output:[/green] [dim]{rich_escape(output_display)}[/dim]")
 
 
 def print_info(message: str):
     """Print an info message."""
-    console.print(f"[dim]{message}[/dim]")
+    console.print(f"[dim]{rich_escape(message)}[/dim]")
 
 
 def print_error(message: str):
     """Print an error message."""
-    console.print(f"[red]Error: {message}[/red]")
+    console.print(f"[red]Error: {rich_escape(message)}[/red]")
 
 
 async def run_review(
@@ -135,7 +136,7 @@ async def run_review(
         if output_format == "markdown":
             console.print(Panel(Markdown(output), title="Review", border_style="green"))
         else:
-            console.print(Panel(output, title="Review", border_style="green"))
+            console.print(Panel(rich_escape(output), title="Review", border_style="green"))
     
     # Submit as GitHub comment if requested
     if submit:

@@ -320,7 +320,13 @@ class RepoTools:
         data = resp.json()
         results = []
         
-        for item in data.get("items", []):
+        # GitHub uses "items", Gitea may use "data" — handle both
+        items = data.get("items") or data.get("data") or []
+        if not items:
+            # Could mean: no matches, search disabled, or API incompatibility
+            total = data.get("total_count", data.get("total", "?"))
+            print(f"[DEBUG-SEARCH] No results (total_count={total}). Search may be disabled on this instance.")
+        for item in items:
             entry = {"path": item.get("path", "")}
             # Extract fragment from text_matches if available
             text_matches = item.get("text_matches", [])
