@@ -219,7 +219,8 @@ class RepoTools:
         
         Returns structured entries: [{path, type, size}]
         """
-        clean_path = sanitize_path(path) if path else ""
+        # Treat ".", "./", "/" same as "" (root directory)
+        clean_path = sanitize_path(path) if path and path.strip() not in (".", "./", "/") else ""
         if clean_path is None:
             return [{"error": "invalid path"}]
         

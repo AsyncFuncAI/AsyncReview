@@ -16,8 +16,9 @@ program
 
 program
     .command('review')
-    .description('Review a GitHub PR or Issue')
-    .requiredOption('-u, --url <url>', 'GitHub PR or Issue URL')
+    .description('Review a GitHub PR/Issue or local directory')
+    .option('-u, --url <url>', 'GitHub PR or Issue URL')
+    .option('-p, --path <path>', 'Local directory path to review')
     .option('-q, --question <question>', 'Question to ask about the PR/Issue (optional with --expert)')
     .option('--expert', 'Run expert code review (SOLID, Security, Performance, Code Quality)')
     .option('-o, --output <format>', 'Output format: text, markdown, json', 'text')
@@ -26,6 +27,15 @@ program
     .option('--api <key>', 'Gemini API key (defaults to GEMINI_API_KEY env var)')
     .option('--github-token <token>', 'GitHub token for private repos (defaults to GITHUB_TOKEN env var)')
     .action(async (options) => {
+        // Validate mutual exclusion: exactly one of --url or --path must be provided
+        if (!options.url && !options.path) {
+            console.error('Error: Either --url or --path must be provided');
+            process.exit(1);
+        }
+        if (options.url && options.path) {
+            console.error('Error: --url and --path are mutually exclusive');
+            process.exit(1);
+        }
         await runReview(options);
     });
 

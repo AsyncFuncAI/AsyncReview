@@ -15,7 +15,8 @@ import {
 } from './python-runner.js';
 
 export interface ReviewOptions {
-    url: string;
+    url?: string;
+    path?: string;
     question?: string;
     output: string;
     quiet?: boolean;
@@ -26,19 +27,23 @@ export interface ReviewOptions {
 }
 
 export async function runReview(options: ReviewOptions): Promise<void> {
-    const { url, question, output, quiet = false, model, api, githubToken, expert = false } = options;
+    const { url, path, question, output, quiet = false, model, api, githubToken, expert = false } = options;
 
     try {
 
         // 4. Get API key
         const apiKey = await getApiKey(api);
 
-        // 5. Get GitHub token (required for code search API)
-        const ghToken = await getGitHubToken(githubToken, true);
+        // 5. Get GitHub token only if using URL mode (not required for local path mode)
+        let ghToken: string | undefined;
+        if (url) {
+            ghToken = await getGitHubToken(githubToken, true);
+        }
 
         // 6. Run the review
         if (!quiet) {
-            console.log(chalk.cyan(`\n 🔍 Reviewing: ${url}`));
+            const target = url || path;
+            console.log(chalk.cyan(`\n 🔍 Reviewing: ${target}`));
             if (expert) {
                 console.log(chalk.cyan(`   Mode: Expert Code Review (SOLID, Security, Code Quality)\n`));
             } else if (question) {
@@ -48,6 +53,7 @@ export async function runReview(options: ReviewOptions): Promise<void> {
 
         const result = await runPythonReview({
             url,
+            path,
             question,
             output,
             quiet,

@@ -24,6 +24,7 @@ from rich.markdown import Markdown
 
 from . import __version__
 from .github_fetcher import parse_github_url, post_comment
+from .local_fetcher import validate_local_path
 from .output_formatter import format_output
 from .virtual_runner import VirtualReviewRunner
 from .expert_prompts import get_expert_prompt
@@ -153,6 +154,76 @@ async def run_review(
             sys.exit(1)
 
 
+async def run_local_review(
+    path: str,
+    question: str | None = None,
+    output_format: str = "text",
+    quiet: bool = False,
+    model: str | None = None,
+    expert: bool = False,
+):
+    """Run a review on a local directory."""
+    # Validate path first
+    try:
+        abs_path = validate_local_path(path)
+    except ValueError as e:
+        print_error(str(e))
+        sys.exit(1)
+
+    # Determine the question to use
+    if expert:
+        actual_question = get_expert_prompt(question)
+        review_mode = "Expert Review"
+    elif question:
+        actual_question = question
+        review_mode = "Review"
+    else:
+        print_error("Either --question or --expert is required")
+        sys.exit(1)
+
+    if not quiet:
+        print_info(f"Reviewing local directory: {abs_path}")
+        if expert:
+            print_info(f"Mode: Expert Code Review (SOLID, Security, Code Quality)")
+        else:
+            print_info(f"Question: {actual_question}")
+        console.print()
+
+    # Create runner
+    runner = VirtualReviewRunner(
+        model=model,
+        quiet=quiet,
+        on_step=None if quiet else print_step,
+    )
+
+    try:
+        answer, sources, metadata = await runner.review_local(abs_path, actual_question)
+    except Exception as e:
+        print_error(f"Review failed: {e}")
+        sys.exit(1)
+
+    # Format and print output
+    model_name = metadata.get("model", model or "unknown")
+    output = format_output(
+        answer=answer,
+        sources=sources,
+        model=model_name,
+        output_format=output_format,
+        metadata=metadata if output_format == "json" else None,
+    )
+
+    if quiet or output_format == "json":
+        # Raw output for scripting
+        print(output)
+    else:
+        # Rich formatted output
+        console.print()
+        if output_format == "markdown":
+            console.print(Panel(Markdown(output), title="Review", border_style="green"))
+        else:
+            console.print(Panel(output, title="Review", border_style="green"))
+
+
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -177,20 +248,28 @@ Examples:
     # review command
     review_parser = subparsers.add_parser(
         "review",
-        help="Review a GitHub PR or Issue",
+        help="Review a GitHub PR/Issue or local directory",
     )
-    review_parser.add_argument(
+
+    # URL and path are mutually exclusive
+    source_group = review_parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument(
         "--url", "-u",
         type=str,
-        required=True,
         help="GitHub PR or Issue URL",
     )
+    source_group.add_argument(
+        "--path", "-p",
+        type=str,
+        help="Local directory path to review",
+    )
+
     review_parser.add_argument(
         "--question", "-q",
         type=str,
         required=False,
         default=None,
-        help="Question to ask about the PR/Issue (optional with --expert)",
+        help="Question to ask about the PR/Issue/directory (optional with --expert)",
     )
     review_parser.add_argument(
         "--expert",
@@ -218,21 +297,37 @@ Examples:
     review_parser.add_argument(
         "--submit",
         action="store_true",
-        help="Post review as a comment on the PR/Issue (requires GITHUB_TOKEN)",
+        help="Post review as a comment on the PR/Issue (GitHub only, requires GITHUB_TOKEN)",
     )
-    
+
     args = parser.parse_args()
-    
+
     if args.command == "review":
-        asyncio.run(run_review(
-            url=args.url,
-            question=args.question,
-            output_format=args.output,
-            quiet=args.quiet,
-            model=args.model,
-            expert=args.expert,
-            submit=args.submit,
-        ))
+        # Validate --submit is only used with --url
+        if args.submit and args.path:
+            print_error("--submit can only be used with --url (GitHub reviews)")
+            sys.exit(1)
+
+        # Dispatch to appropriate review function
+        if args.url:
+            asyncio.run(run_review(
+                url=args.url,
+                question=args.question,
+                output_format=args.output,
+                quiet=args.quiet,
+                model=args.model,
+                expert=args.expert,
+                submit=args.submit,
+            ))
+        elif args.path:
+            asyncio.run(run_local_review(
+                path=args.path,
+                question=args.question,
+                output_format=args.output,
+                quiet=args.quiet,
+                model=args.model,
+                expert=args.expert,
+            ))
     else:
         parser.print_help()
         sys.exit(1)

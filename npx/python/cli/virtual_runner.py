@@ -1,14 +1,12 @@
 """Virtual review runner - runs RLM reviews on GitHub content without local repo."""
 
 import asyncio
+import concurrent.futures
 import logging
-import re
 from typing import Callable
 
 import dspy
 from dspy.primitives.python_interpreter import PythonInterpreter
-from dspy.primitives.prediction import Prediction
-from dspy.primitives.repl_types import REPLHistory
 
 from cr.config import MAIN_MODEL, SUB_MODEL, MAX_ITERATIONS, MAX_LLM_CALLS
 from cr.rlm_runner import build_deno_command
@@ -19,82 +17,19 @@ from .github_fetcher import (
     fetch_issue,
     build_review_context,
 )
+from .local_fetcher import build_local_context, validate_local_path
+from .local_repo_tools import LocalRepoTools
 from .repo_tools import RepoTools
-
-
-# Tool usage instructions for the model - simplified and clear
-AGENTIC_TOOLS_PROMPT = """
-## AVAILABLE COMMANDS (USE ONLY THESE!)
-
-⚠️ **ONLY these 3 commands exist. Any other command will NOT work:**
-
-| Command | Purpose | Example |
-|---------|---------|---------|
-| `SEARCH_CODE:term` | Find files by name/content | `print("SEARCH_CODE:rlm.py")` |
-| `FETCH_FILE:path` | Read file contents | `print("FETCH_FILE:dspy/predict/rlm.py")` |
-| `LIST_DIR:path` | List directory contents | `print("LIST_DIR:dspy/predict")` |
-
-### ❌ FORBIDDEN - These commands DO NOT EXIST:
-- `READ_FILE` - WRONG! Use `FETCH_FILE` instead
-- `READ_CODE` - WRONG! Use `FETCH_FILE` instead  
-- `GET_FILE` - WRONG! Use `FETCH_FILE` instead
-- `LIST_FILES` - WRONG! Use `LIST_DIR` instead
-- `open()` / `os.path` - WRONG! Won't work in sandbox
-- Any other command not listed above
-
----
-
-### SEARCH_CODE - Find files by name or content
-```python
-print("SEARCH_CODE:rlm.py")
-print("SEARCH_CODE:enable_tool_optimization")
-```
-Results appear in `search_results` on your NEXT step.
-
-### FETCH_FILE - Read file contents (NOT read_file, NOT read_code!)
-```python
-print("FETCH_FILE:dspy/predict/rlm.py")
-print("FETCH_FILE:tests/predict/test_rlm.py")
-```
-Content appears in `repo_files['dspy/predict/rlm.py']` on your NEXT step.
-
-### LIST_DIR - List directory contents  
-```python
-print("LIST_DIR:dspy/predict")
-print("LIST_DIR:tests")
-```
-Entries appear in `repo_dirs['dspy/predict']` on your NEXT step.
-
-### WORKFLOW:
-1. `print("SEARCH_CODE:filename")` → find paths
-2. `print("FETCH_FILE:path/to/file.py")` → read content
-3. Check `repo_files['path/to/file.py']` in next step
-
----
-
-## EXPERT REVIEW CHECKLISTS (for --expert mode)
-
-When performing expert code reviews, you can fetch these local checklists for detailed guidance:
-
-| Category | Command | Use For |
-|----------|---------|---------|
-| SOLID | `print("FETCH_FILE:checklists/solid-checklist.md")` | Design principle violations, code smells |
-| Security | `print("FETCH_FILE:checklists/security-checklist.md")` | XSS, injection, auth gaps, race conditions |
-| Code Quality | `print("FETCH_FILE:checklists/code-quality-checklist.md")` | Error handling, performance, boundaries |
-| Removal Plan | `print("FETCH_FILE:checklists/removal-plan.md")` | Dead code identification template |
-
-Fetch the relevant checklists based on what the PR changes require. You decide which categories apply.
-"""
 
 
 
 
 
 class VirtualReviewRunner:
-    """Run RLM code reviews on GitHub PRs without a local repository.
-    
-    Creates a 'virtual' codebase context from GitHub API data.
-    Supports agentic file fetching via FETCH_FILE/LIST_DIR/SEARCH_CODE commands.
+    """Run RLM code reviews on GitHub PRs and local directories.
+
+    Creates a 'virtual' codebase context from GitHub API data or local filesystem.
+    Uses native DSPy RLM tools for agentic file fetching, directory listing, and code search.
     """
     
     def __init__(
@@ -118,30 +53,134 @@ class VirtualReviewRunner:
         self._lm = None
         # Repo tools state (set per-review)
         self._repo_tools: RepoTools | None = None
-        self._repo_files: dict[str, str] = {}  # Fetched file contents
-        self._repo_dirs: dict[str, list] = {}  # Directory listings
-        self._search_results: list[dict] = []  # Search results
     
     def _load_local_checklist(self, path: str) -> str:
         """Load a bundled checklist file from the CLI package.
-        
+
         Args:
             path: Path like 'checklists/solid-checklist.md'
-            
+
         Returns:
             Content of the checklist file, or error message if not found
         """
         from pathlib import Path
-        
+
         # Get the directory where this module is located
         cli_dir = Path(__file__).parent
         checklist_path = cli_dir / path
-        
+
         if checklist_path.exists():
             return checklist_path.read_text()
         else:
             return f"[Error] Checklist not found: {path}"
-    
+
+    def _sync_call(self, coro):
+        """Bridge async coroutines to sync using ThreadPoolExecutor.
+
+        DSPy RLM tools must be sync, but RepoTools/LocalRepoTools methods are async.
+        This helper runs the coroutine in a thread pool and returns the result.
+
+        Args:
+            coro: An async coroutine to execute
+
+        Returns:
+            The result of the coroutine
+        """
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(asyncio.run, coro)
+            return future.result()
+
+    def _create_tool_functions(self):
+        """Create sync tool wrapper functions for DSPy RLM.
+
+        Returns a dict of three sync tool functions as closures that capture
+        self by reference (so self._repo_tools can change between review calls).
+
+        Returns:
+            Dict mapping tool name to function: {fetch_file, list_dir, search_code}
+        """
+        runner = self
+
+        def fetch_file(path: str) -> str:
+            """Fetch a file from the repository by path.
+
+            Handles both regular repository files and bundled checklist files.
+            Returns file content as a string, or an error message if the file
+            cannot be read.
+
+            Args:
+                path: File path (e.g., 'src/main.py' or 'checklists/solid-checklist.md')
+
+            Returns:
+                File content as string, or error message
+            """
+            if path.startswith("checklists/"):
+                return runner._load_local_checklist(path)
+            return runner._sync_call(runner._repo_tools.fetch_file(path))
+
+        def list_dir(path: str) -> str:
+            """List directory contents at the given path.
+
+            Returns a formatted text listing of files and directories,
+            showing path, type (file/dir), and size in bytes.
+
+            Args:
+                path: Directory path (e.g., 'src' or '')
+
+            Returns:
+                Formatted text listing of directory contents
+            """
+            entries = runner._sync_call(runner._repo_tools.list_directory(path))
+            if not entries:
+                return "[No entries]"
+
+            # Format as readable text
+            lines = []
+            for entry in entries:
+                if "error" in entry:
+                    lines.append(f"[Error] {entry['error']}")
+                else:
+                    entry_path = entry.get("path", "?")
+                    entry_type = entry.get("type", "?")
+                    entry_size = entry.get("size", 0)
+                    if entry_type == "dir":
+                        lines.append(f"[DIR]  {entry_path}")
+                    else:
+                        lines.append(f"[FILE] {entry_path} ({entry_size} bytes)")
+            return "\n".join(lines)
+
+        def search_code(query: str) -> str:
+            """Search for code patterns in the repository.
+
+            Searches for code content, filenames, or paths. Returns a formatted
+            text listing of matching files with code fragments.
+
+            Args:
+                query: Search query (e.g., 'enable_tool_optimization' or 'rlm.py')
+
+            Returns:
+                Formatted text listing of search results with file paths and fragments
+            """
+            results = runner._sync_call(runner._repo_tools.search_code(query))
+            if not results:
+                return "[No matches found]"
+
+            # Format as readable text
+            lines = []
+            for result in results:
+                path = result.get("path", "?")
+                fragment = result.get("fragment", "")
+                if fragment:
+                    # Truncate fragment if too long
+                    if len(fragment) > 100:
+                        fragment = fragment[:100] + "..."
+                    lines.append(f"{path}: {fragment}")
+                else:
+                    lines.append(f"{path}")
+            return "\n".join(lines)
+
+        return {"fetch_file": fetch_file, "list_dir": list_dir, "search_code": search_code}
+
     def _ensure_configured(self):
         """Configure DSPy and RLM on first use."""
         if self._configured:
@@ -179,51 +218,60 @@ class VirtualReviewRunner:
             sub_lm=dspy.LM(sub_model, cache=False),
             verbose=not self.quiet,
             interpreter=interpreter,
+            tools=self._create_tool_functions(),
         )
         self._configured = True
     
     async def review(self, url: str, question: str) -> tuple[str, list[str], dict]:
         """Review a GitHub URL (PR or Issue).
-        
+
         Args:
             url: GitHub PR or Issue URL
             question: Question to ask about the content
-            
+
         Returns:
             Tuple of (answer, sources, metadata)
         """
         # Parse URL to determine type
         owner, repo, number, url_type = parse_github_url(url)
-        
+
         # Fetch content
         if url_type == "pr":
             data = await fetch_pr(owner, repo, number)
         else:
             data = await fetch_issue(owner, repo, number)
-        
+
         # Get head SHA for PR (for consistent file reads)
         head_sha = data.get("head_sha", "HEAD")
-        
+
         # Create repo tools for this review
         self._repo_tools = RepoTools(owner, repo, head_sha)
-        self._repo_files = {}
-        self._repo_dirs = {}
-        self._search_results = []
-        
-        # Build context from PR data (tools go in question, not context)
+
+        # Build context from PR data
         context = build_review_context(data)
-        
+
         # Run RLM
         self._ensure_configured()
-        
+
         try:
-            answer, sources = await self._run_rlm_with_tools(context, question)
+            with dspy.context(lm=self._lm):
+                result = await self._rlm.aforward(context=context, question=question)
+
+            # Extract answer and sources from result
+            answer = result.answer
+            sources = result.sources
+            if isinstance(sources, str):
+                sources = [s.strip() for s in sources.split(",") if s.strip()]
+
+            # Note: DSPy's verbose=True already shows step-by-step progress in real-time.
+            # Post-hoc trajectory replay via on_step is intentionally removed to avoid
+            # duplicate output (steps were being shown twice).
         finally:
             # Cleanup
             if self._repo_tools:
                 await self._repo_tools.close()
                 self._repo_tools = None
-        
+
         metadata = {
             "type": url_type,
             "owner": owner,
@@ -231,151 +279,61 @@ class VirtualReviewRunner:
             "number": number,
             "title": data.get("title", ""),
             "model": self.model,
-            "files_fetched": list(self._repo_files.keys()),
+            "files_fetched": [],
         }
-        
+
         return answer, sources, metadata
-    
-    async def _process_tool_requests(self, output: str) -> bool:
-        """Parse output for tool requests and execute them.
-        
-        Returns True if any tools were executed.
+
+    async def review_local(self, path: str, question: str) -> tuple[str, list[str], dict]:
+        """Review a local directory.
+
+        Args:
+            path: Local directory path (relative or absolute)
+            question: Question to ask about the code
+
+        Returns:
+            Tuple of (answer, sources, metadata)
         """
-        if not self._repo_tools:
-            return False
-        
-        executed = False
-        
-        # Check for FETCH_FILE requests
-        fetch_matches = re.findall(r'FETCH_FILE:([^\s\n]+)', output)
-        if fetch_matches and not self.quiet:
-            print(f"\n[DEBUG] Found FETCH_FILE requests: {fetch_matches}")
-        for path in fetch_matches[:3]:  # Limit to 3 per iteration
-            if path not in self._repo_files:
-                if not self.quiet:
-                    print(f"[DEBUG] Fetching file: {path}")
-                
-                # Handle local checklists (bundled with CLI)
-                if path.startswith("checklists/"):
-                    content = self._load_local_checklist(path)
-                else:
-                    content = await self._repo_tools.fetch_file(path)
-                
-                self._repo_files[path] = content
-                if not self.quiet:
-                    print(f"[DEBUG] Fetched {path}: {len(content)} chars, starts with: {content[:100]}...")
-                executed = True
-        
-        # Check for LIST_DIR requests
-        dir_matches = re.findall(r'LIST_DIR:([^\s\n]+)', output)
-        if dir_matches and not self.quiet:
-            print(f"\n[DEBUG] Found LIST_DIR requests: {dir_matches}")
-        for path in dir_matches[:2]:  # Limit to 2 per iteration
-            if path not in self._repo_dirs:
-                entries = await self._repo_tools.list_directory(path)
-                self._repo_dirs[path] = entries
-                if not self.quiet:
-                    print(f"[DEBUG] Listed {path}: {len(entries)} entries")
-                executed = True
-        
-        # Check for SEARCH_CODE requests
-        search_matches = re.findall(r'SEARCH_CODE:(.+?)(?:\n|$)', output)
-        if search_matches and not self.quiet:
-            print(f"\n[DEBUG] Found SEARCH_CODE requests: {search_matches}")
-        for query in search_matches[:1]:  # Limit to 1 per iteration
-            results = await self._repo_tools.search_code(query.strip())
-            self._search_results = results
-            if not self.quiet:
-                print(f"[DEBUG] Search for '{query.strip()}': {len(results)} results")
-                for r in results[:3]:
-                    print(f"[DEBUG]   - {r.get('path')}")
-            executed = True
-        
-        return executed
-    
-    async def _run_rlm_with_tools(self, context: str, question: str) -> tuple[str, list[str]]:
-        """Run the RLM with agentic tool support."""
-        from dspy.predict.rlm import _strip_code_fences
-        
-        rlm = self._rlm
-        output_field_names = list(rlm.signature.output_fields.keys())
-        execution_tools = rlm._prepare_execution_tools()
-        
-        # Prepend tool instructions to question (treated as instructions, not data)
-        augmented_question = AGENTIC_TOOLS_PROMPT + "\n\n---\n\n**USER QUESTION:** " + question
-        
-        with dspy.context(lm=self._lm):
-            with rlm._interpreter_context(execution_tools) as repl:
-                history = REPLHistory()
-                
-                for iteration in range(rlm.max_iterations):
-                    # Rebuild variables with current tool state so LLM sees available data
-                    input_args = {
-                        "context": context,
-                        "question": augmented_question,
-                        "repo_files": self._repo_files,
-                        "repo_dirs": self._repo_dirs,
-                        "search_results": self._search_results,
-                    }
-                    variables = rlm._build_variables(**input_args)
-                    
-                    variables_info = [variable.format() for variable in variables]
-                    pred = await rlm.generate_action.acall(
-                        variables_info=variables_info,
-                        repl_history=history,
-                        iteration=f"{iteration + 1}/{rlm.max_iterations}",
-                    )
-                    
-                    # Execute the code with current repo state
-                    try:
-                        code = _strip_code_fences(pred.code)
-                        
-                        # Inject serializable data only
-                        exec_vars = {
-                            "context": context,
-                            "question": question,
-                            "repo_files": self._repo_files,
-                            "repo_dirs": self._repo_dirs,
-                            "search_results": self._search_results,
-                        }
-                        
-                        result = repl.execute(code, variables=exec_vars)
-                    except Exception as e:
-                        result = f"[Error] {e}"
-                    
-                    # Format output
-                    if isinstance(result, list):
-                        output = "\n".join(map(str, result))
-                    else:
-                        output = str(result) if result else ""
-                    
-                    # Process any tool requests in the output
-                    await self._process_tool_requests(output)
-                    
-                    # Call step callback if provided (pass reasoning, code, and output)
-                    if self.on_step:
-                        self.on_step(iteration + 1, pred.reasoning, code, output)
-                    
-                    # Process result to check if done
-                    processed = rlm._process_execution_result(pred, result, history, output_field_names)
-                    
-                    if isinstance(processed, Prediction):
-                        # Done!
-                        answer = getattr(processed, "answer", str(processed))
-                        sources = getattr(processed, "sources", [])
-                        if isinstance(sources, str):
-                            sources = [s.strip() for s in sources.split(",") if s.strip()]
-                        return answer, sources
-                    
-                    history = processed
-                
-                # Max iterations reached
-                final_result = await rlm._aextract_fallback(variables, history, output_field_names)
-                answer = getattr(final_result, "answer", str(final_result))
-                sources = getattr(final_result, "sources", [])
-                if isinstance(sources, str):
-                    sources = [s.strip() for s in sources.split(",") if s.strip()]
-                return answer, sources
+        # Validate and resolve path
+        abs_path = validate_local_path(path)
+
+        # Create local repo tools
+        local_tools = LocalRepoTools(abs_path)
+        self._repo_tools = local_tools
+
+        # Build context from local directory
+        context = build_local_context(abs_path)
+
+        # Run RLM
+        self._ensure_configured()
+
+        try:
+            with dspy.context(lm=self._lm):
+                result = await self._rlm.aforward(context=context, question=question)
+
+            # Extract answer and sources from result
+            answer = result.answer
+            sources = result.sources
+            if isinstance(sources, str):
+                sources = [s.strip() for s in sources.split(",") if s.strip()]
+
+            # Note: DSPy's verbose=True already shows step-by-step progress in real-time.
+            # Post-hoc trajectory replay via on_step is intentionally removed to avoid
+            # duplicate output (steps were being shown twice).
+        finally:
+            # Cleanup
+            if self._repo_tools:
+                await self._repo_tools.close()
+                self._repo_tools = None
+
+        metadata = {
+            "type": "local",
+            "path": abs_path,
+            "model": self.model,
+            "files_fetched": [],
+        }
+
+        return answer, sources, metadata
     
     async def review_pr(self, url: str, question: str) -> tuple[str, list[str], dict]:
         """Review a GitHub PR with full diff context."""
