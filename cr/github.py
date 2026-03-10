@@ -13,15 +13,22 @@ from .config import CR_CACHE_DIR, GITHUB_TOKEN, GITHUB_API_BASE
 from .diff_types import PRInfo, FileContents, DiffFileContext
 
 
+def _get_login(user: dict) -> str:
+    """Get user login, falling back to username (Gitea compat)."""
+    return user.get("login") or user.get("username") or "unknown"
+
+
 # In-memory store for loaded PRs (MVP - no persistence)
 _pr_cache: dict[str, PRInfo] = {}
 
 
 def parse_pr_url(url: str) -> tuple[str, str, int]:
-    """Parse a GitHub PR URL into (owner, repo, number).
+    """Parse a PR/MR URL into (owner, repo, number).
+    
+    Supports GitHub, Gitea, GitLab, and Bitbucket URL formats.
     
     Args:
-        url: GitHub PR URL like https://github.com/owner/repo/pull/123
+        url: PR/MR URL (e.g. /pull/1, /pulls/1, /-/merge_requests/1, /pull-requests/1)
         
     Returns:
         Tuple of (owner, repo, pr_number)
@@ -29,10 +36,14 @@ def parse_pr_url(url: str) -> tuple[str, str, int]:
     Raises:
         ValueError: If URL format is invalid
     """
-    pattern = r"github\.com/([^/]+)/([^/]+)/pull/(\d+)"
+    # GitHub /pull/, Gitea /pulls/, GitLab /-/merge_requests/, Bitbucket /pull-requests/
+    pattern = r"^https?://[^/]+/([^/]+)/([^/]+)/(?:-/)?(?:pulls?|merge_requests|pull-requests)/(\d+)(?:[/?#].*)?$"
     match = re.search(pattern, url)
     if not match:
-        raise ValueError(f"Invalid GitHub PR URL: {url}")
+        raise ValueError(
+            f"Invalid PR URL: {url}\n"
+            "Expected: https://host/owner/repo/{pull,pulls,merge_requests,pull-requests}/123"
+        )
     return match.group(1), match.group(2), int(match.group(3))
 
 
@@ -96,10 +107,10 @@ async def load_pr(pr_url: str) -> PRInfo:
                     "author": {
                         "name": c["commit"]["author"]["name"],
                         "date": c["commit"]["author"]["date"],
-                        "login": c["author"]["login"] if c.get("author") else None,
-                        "avatar_url": c["author"]["avatar_url"] if c.get("author") else None,
+                        "login": _get_login(c["author"]) if c.get("author") else None,
+                        "avatar_url": c["author"].get("avatar_url", "") if c.get("author") else None,
                     },
-                    "html_url": c["html_url"],
+                    "html_url": c.get("html_url", ""),
                 }
                 for c in commits_data
             ]
@@ -118,12 +129,12 @@ async def load_pr(pr_url: str) -> PRInfo:
                  {
                      "id": c["id"],
                      "user": {
-                         "login": c["user"]["login"],
-                         "avatar_url": c["user"]["avatar_url"],
+                         "login": _get_login(c["user"]),
+                         "avatar_url": c["user"].get("avatar_url", ""),
                      },
                      "body": c["body"],
                      "created_at": c["created_at"],
-                     "html_url": c["html_url"],
+                     "html_url": c.get("html_url", ""),
                  }
                  for c in comments_data
              ]
@@ -146,15 +157,15 @@ async def load_pr(pr_url: str) -> PRInfo:
         number=number,
         title=pr_data.get("title", ""),
         body=pr_data.get("body") or "",
-        base_sha=pr_data["base"]["sha"],
-        head_sha=pr_data["head"]["sha"],
+        base_sha=pr_data.get("base", {}).get("sha", "HEAD"),
+        head_sha=pr_data.get("head", {}).get("sha", "HEAD"),
         files=files,
         created_at=datetime.now(),
-        user={"login": pr_data["user"]["login"], "avatar_url": pr_data["user"]["avatar_url"]},
+        user={"login": _get_login(pr_data["user"]), "avatar_url": pr_data["user"].get("avatar_url", "")},
         state=pr_data.get("state", "open"),
         draft=pr_data.get("draft", False),
-        head_ref=pr_data["head"]["ref"],
-        base_ref=pr_data["base"]["ref"],
+        head_ref=pr_data.get("head", {}).get("ref", "unknown"),
+        base_ref=pr_data.get("base", {}).get("ref", "main"),
         commits=pr_data.get("commits", 0),
         additions=pr_data.get("additions", 0),
         deletions=pr_data.get("deletions", 0),

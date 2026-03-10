@@ -2,6 +2,7 @@
 
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.markup import escape as rich_escape
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
@@ -112,12 +113,12 @@ def print_help():
 
 def print_error(message: str):
     """Print an error message."""
-    console.print(f"\n[red]Error: {message}[/red]")
+    console.print(f"\n[red]Error: {rich_escape(message)}[/red]")
 
 
 def print_info(message: str):
     """Print an info message."""
-    console.print(f"[dim]{message}[/dim]")
+    console.print(f"[dim]{rich_escape(message)}[/dim]")
 
 
 def print_history(history: list[tuple[str, str]]):
@@ -126,10 +127,10 @@ def print_history(history: list[tuple[str, str]]):
         console.print("[dim]No history yet.[/dim]")
     else:
         for i, (q, a) in enumerate(history, 1):
-            console.print(f"\n[cyan]Q{i}:[/cyan] {q}")
+            console.print(f"\n[cyan]Q{i}:[/cyan] {rich_escape(q)}")
             # Truncate long answers
             display_a = a[:200] + "..." if len(a) > 200 else a
-            console.print(f"[green]A{i}:[/green] {display_a}")
+            console.print(f"[green]A{i}:[/green] {rich_escape(display_a)}")
     console.print()
 
 

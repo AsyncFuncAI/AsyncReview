@@ -60,7 +60,8 @@ class VirtualReviewRunner:
         
         # Configure DSPy with specified model
         model_name = self.model
-        if not model_name.startswith("gemini/"):
+        # Only add gemini/ prefix if no provider prefix exists (no / in name)
+        if "/" not in model_name:
             model_name = f"gemini/{model_name}"
         
         dspy.configure(lm=dspy.LM(model_name))
@@ -76,7 +77,7 @@ class VirtualReviewRunner:
             signature="context, question -> answer, sources",
             max_iterations=MAX_ITERATIONS,
             max_llm_calls=MAX_LLM_CALLS,
-            sub_lm=dspy.LM(f"gemini/{SUB_MODEL}" if not SUB_MODEL.startswith("gemini/") else SUB_MODEL),
+            sub_lm=dspy.LM(SUB_MODEL if "/" in SUB_MODEL else f"gemini/{SUB_MODEL}"),
             verbose=not self.quiet,
             interpreter=interpreter,
         )

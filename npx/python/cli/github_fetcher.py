@@ -12,11 +12,16 @@ from cr.config import GITHUB_TOKEN, GITHUB_API_BASE
 UrlType = Literal["pr", "issue"]
 
 
+def _get_login(user: dict) -> str:
+    """Get user login, falling back to username (Gitea compat)."""
+    return user.get("login") or user.get("username") or "unknown"
+
+
 def parse_github_url(url: str) -> tuple[str, str, int, UrlType]:
-    """Parse a GitHub URL into (owner, repo, number, type).
+    """Parse a GitHub/Gitea/GitLab/Bitbucket URL into (owner, repo, number, type).
     
     Args:
-        url: GitHub Issue or PR URL
+        url: Issue/PR/MR URL from any supported forge
         
     Returns:
         Tuple of (owner, repo, number, type)
@@ -25,26 +30,38 @@ def parse_github_url(url: str) -> tuple[str, str, int, UrlType]:
         ValueError: If URL format is invalid
         
     Examples:
-        >>> parse_github_url("https://github.com/vercel-labs/json-render/pull/35")
-        ('vercel-labs', 'json-render', 35, 'pr')
-        >>> parse_github_url("https://github.com/AsyncFuncAI/AsyncReview/issues/1")
-        ('AsyncFuncAI', 'AsyncReview', 1, 'issue')
+        >>> parse_github_url("https://github.com/owner/repo/pull/35")
+        ('owner', 'repo', 35, 'pr')
+        >>> parse_github_url("https://gitea.example.com/org/repo/pulls/42")
+        ('org', 'repo', 42, 'pr')
+        >>> parse_github_url("https://gitlab.com/org/repo/-/merge_requests/10")
+        ('org', 'repo', 10, 'pr')
+        >>> parse_github_url("https://bitbucket.org/org/repo/pull-requests/5")
+        ('org', 'repo', 5, 'pr')
+        >>> parse_github_url("https://github.com/owner/repo/issues/1")
+        ('owner', 'repo', 1, 'issue')
     """
-    # Try PR URL first (primary use case)
-    pr_pattern = r"github\.com/([^/]+)/([^/]+)/pull/(\d+)"
+    # PR patterns — accept any domain, support multiple forge URL formats:
+    #   GitHub:    /owner/repo/pull/123
+    #   Gitea:     /owner/repo/pulls/123
+    #   GitLab:    /owner/repo/-/merge_requests/123
+    #   Bitbucket: /owner/repo/pull-requests/123
+    pr_pattern = r"^https?://[^/]+/([^/]+)/([^/]+)/(?:-/)?(?:pulls?|merge_requests|pull-requests)/(\d+)(?:[/?#].*)?$"
     pr_match = re.search(pr_pattern, url)
     if pr_match:
         return pr_match.group(1), pr_match.group(2), int(pr_match.group(3)), "pr"
-    
-    # Try Issue URL
-    issue_pattern = r"github\.com/([^/]+)/([^/]+)/issues/(\d+)"
+
+    # Issue patterns — GitHub/Gitea/GitLab
+    #   GitLab:    /owner/repo/-/issues/123
+    issue_pattern = r"^https?://[^/]+/([^/]+)/([^/]+)/(?:-/)?issues/(\d+)(?:[/?#].*)?$"
     issue_match = re.search(issue_pattern, url)
     if issue_match:
         return issue_match.group(1), issue_match.group(2), int(issue_match.group(3)), "issue"
-    
+
     raise ValueError(
-        f"Invalid GitHub URL: {url}\n"
-        "Expected format: https://github.com/owner/repo/pull/123 or .../issues/123"
+        f"Invalid URL: {url}\n"
+        "Expected: https://host/owner/repo/{pull,pulls,merge_requests,pull-requests}/123\n"
+        "     or:  https://host/owner/repo/issues/123"
     )
 
 
@@ -119,12 +136,12 @@ async def fetch_pr(owner: str, repo: str, number: int) -> dict:
             comments_data = comments_resp.json()
             comments_list = [
                 {
-                    "author": c["user"]["login"],
+                    "author": _get_login(c["user"]),
                     "body": c["body"],
                 }
                 for c in comments_data
             ]
-    
+
     # Build structured result
     files = [
         {
@@ -144,11 +161,11 @@ async def fetch_pr(owner: str, repo: str, number: int) -> dict:
         "number": number,
         "title": pr_data.get("title", ""),
         "body": pr_data.get("body") or "",
-        "author": pr_data["user"]["login"],
+        "author": _get_login(pr_data["user"]),
         "state": pr_data.get("state", "open"),
-        "base_branch": pr_data["base"]["ref"],
-        "head_branch": pr_data["head"]["ref"],
-        "head_sha": pr_data["head"]["sha"],  # For consistent file reads
+        "base_branch": pr_data.get("base", {}).get("ref", "main"),
+        "head_branch": pr_data.get("head", {}).get("ref", "unknown"),
+        "head_sha": pr_data.get("head", {}).get("sha", "HEAD"),  # For consistent file reads
         "files": files,
         "commits": commits_list,
         "comments": comments_list,
@@ -182,12 +199,12 @@ async def fetch_issue(owner: str, repo: str, number: int) -> dict:
             comments_data = comments_resp.json()
             comments_list = [
                 {
-                    "author": c["user"]["login"],
+                    "author": _get_login(c["user"]),
                     "body": c["body"],
                 }
                 for c in comments_data
             ]
-    
+
     return {
         "type": "issue",
         "owner": owner,
@@ -195,7 +212,7 @@ async def fetch_issue(owner: str, repo: str, number: int) -> dict:
         "number": number,
         "title": issue_data.get("title", ""),
         "body": issue_data.get("body") or "",
-        "author": issue_data["user"]["login"],
+        "author": _get_login(issue_data["user"]),
         "state": issue_data.get("state", "open"),
         "labels": [l["name"] for l in issue_data.get("labels", [])],
         "comments": comments_list,

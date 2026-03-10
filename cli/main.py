@@ -19,6 +19,7 @@ import asyncio
 import sys
 
 from rich.console import Console
+from rich.markup import escape as rich_escape
 from rich.panel import Panel
 from rich.markdown import Markdown
 
@@ -42,12 +43,12 @@ def print_step(step_num: int, reasoning: str, code: str):
 
 def print_info(message: str):
     """Print an info message."""
-    console.print(f"[dim]{message}[/dim]")
+    console.print(f"[dim]{rich_escape(message)}[/dim]")
 
 
 def print_error(message: str):
     """Print an error message."""
-    console.print(f"[red]Error: {message}[/red]")
+    console.print(f"[red]Error: {rich_escape(message)}[/red]")
 
 
 async def run_review(
@@ -103,7 +104,7 @@ async def run_review(
         if output_format == "markdown":
             console.print(Panel(Markdown(output), title="Review", border_style="green"))
         else:
-            console.print(Panel(output, title="Review", border_style="green"))
+            console.print(Panel(rich_escape(output), title="Review", border_style="green"))
 
 
 def main():
