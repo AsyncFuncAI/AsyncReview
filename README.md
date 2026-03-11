@@ -120,6 +120,8 @@ If you prefer manual configuration, point your agent to the skill definition fil
 
 To run the full backend server or web interface locally, please see the [Installation Guide](INSTALLATION.md).
 
+To run using **Docker**, see the [Docker Guide](DOCKER.md).
+
 ## License
 
 MIT

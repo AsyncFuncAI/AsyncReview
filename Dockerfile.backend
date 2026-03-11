@@ -1,0 +1,62 @@
+# Base image
+FROM python:3.11.8-slim-bookworm
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:0.5.29 /uv /bin/uv
+
+# Install Deno
+# We install Deno to a global location or user's home
+ENV DENO_INSTALL="/usr/local"
+ENV DENO_VERSION="v1.40.3"
+# Install deno manually to /usr/local/bin so it's accessible to all users
+RUN curl -fsSL https://deno.land/x/install/install.sh | sh -s ${DENO_VERSION}
+
+# Set working directory
+WORKDIR /app
+
+# Copy dependency definition only to leverage cache
+COPY pyproject.toml README.md ./
+
+# Compile and install dependencies
+# We install to system python which is fine in docker, but we need to ensure permissions if we were to install more later.
+# However, system install requires root. We do this BEFORE switching user.
+RUN uv pip compile pyproject.toml -o requirements.txt && \
+    uv pip install --system -r requirements.txt
+
+# Copy source code
+COPY cr/ ./cr/
+COPY cli/ ./cli/
+
+# Install the project itself
+RUN uv pip install --system --no-deps .
+
+# Cache Deno dependencies
+# We need to run this as the user who will run the app, OR ensure the cache is accessible.
+# If we run as appuser, Deno will cache to $HOME/.cache/deno
+# So we should switch user first.
+
+# Change ownership of the app directory
+RUN chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Cache Deno dependencies (will be stored in /home/appuser/.cache/deno or similar)
+# We need to ensure appuser has a home directory or set DENO_DIR
+ENV DENO_DIR="/app/.deno_cache"
+RUN deno cache npm:pyodide/pyodide.js
+
+# Expose port
+EXPOSE 8000
+
+# Default command
+CMD ["uvicorn", "cr.server:app", "--host", "0.0.0.0", "--port", "8000"]

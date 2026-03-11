@@ -8,12 +8,16 @@
 #   make all            - Build, install, and test
 #   make clean          - Clean build artifacts
 #
+# Docker Usage:
+#   make docker-up      - Run production environment (User mode)
+#   make docker-dev     - Run development environment (Hot-reload)
+#
 # Version Management:
 #   make bump-patch     - Bump patch version (0.5.0 -> 0.5.1)
 #   make bump-minor     - Bump minor version (0.5.0 -> 0.6.0)
 #   make bump-major     - Bump major version (0.5.0 -> 1.0.0)
 
-.PHONY: all build install test publish clean bump-patch bump-minor bump-major version
+.PHONY: all build install test publish clean bump-patch bump-minor bump-major version docker-up docker-dev
 
 # Version file - single source of truth
 VERSION_FILE := VERSION
@@ -74,6 +78,20 @@ clean:
 	@rm -rf $(DIST_DIR)/*.tar.gz
 	@rm -rf .runtime_stage
 	@echo "Done."
+
+# ============================================================
+# Docker Helpers
+# ============================================================
+
+docker-up:
+	@if [ ! -f .env ]; then echo "Error: .env file not found. Copy .env.example to .env and fill in API keys."; exit 1; fi
+	@echo "==> Starting AsyncReview in Production Mode (Immutable)..."
+	@docker compose up --build
+
+docker-dev:
+	@if [ ! -f .env ]; then echo "Error: .env file not found. Copy .env.example to .env and fill in API keys."; exit 1; fi
+	@echo "==> Starting AsyncReview in Development Mode (Hot-Reload)..."
+	@docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 
 # ============================================================
 # Version Management
@@ -171,6 +189,10 @@ publish-npm: $(VERSION_FILE)
 help:
 	@echo "AsyncReview Runtime Build System"
 	@echo ""
+	@echo "Docker Commands (Preferred):"
+	@echo "  make docker-up    - Run production environment (User mode)"
+	@echo "  make docker-dev   - Run development environment (Hot-reload)"
+	@echo ""
 	@echo "Build Commands:"
 	@echo "  make build        - Build runtime v$(VERSION) for $(PLATFORM)"
 	@echo "  make install      - Install built runtime locally"
@@ -197,4 +219,3 @@ help:
 	@echo "Dev Commands:"
 	@echo "  make build-npx    - Build TypeScript only"
 	@echo "  make dev URL=... Q=... - Run dev mode"
-

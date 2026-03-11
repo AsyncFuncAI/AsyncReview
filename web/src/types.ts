@@ -24,6 +24,7 @@ export interface PRInfo {
   commits?: number
   additions?: number
   deletions?: number
+  changedFiles?: number
   commitsList?: Array<{
     sha: string
     message: string

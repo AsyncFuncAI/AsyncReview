@@ -1,0 +1,28 @@
+services:
+  backend:
+    # Run as root in development to avoid permission issues with bind mounts
+    user: root
+    volumes:
+      - ./:/app
+      # Use anonymous volumes to prevent host directories from overwriting container directories
+      - /app/.venv
+      - /app/.deno
+    command: uvicorn cr.server:app --reload --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      - WATCHFILES_FORCE_POLLING=true
+
+  frontend:
+    # Run as root in development to ensure node_modules write access and hot reloading
+    user: root
+    build:
+      target: dev
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      - API_URL=http://backend:8000
+    command: npm run dev -- --host
