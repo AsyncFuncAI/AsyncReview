@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""AsyncReview CLI - Review GitHub PRs and Issues from the command line.
+"""AsyncReview CLI - Review GitHub and AtomGit PRs and Issues from the command line.
 
 Primary use case: PR code review with full diff context.
 
 Examples:
-    # Quick PR review
+    # Quick GitHub PR review
     asyncreview review --url https://github.com/org/repo/pull/123 -q "Any security concerns?"
-    
+
+    # AtomGit PR review
+    asyncreview review --url https://atomgit.com/org/repo/pulls/456 -q "Review this PR"
+
     # Output as markdown for docs
     asyncreview review --url https://github.com/org/repo/pull/123 -q "Summarize changes" --output markdown
-    
+
     # Quiet mode for scripting
     asyncreview review --url https://github.com/org/repo/pull/123 -q "Review this" --quiet --output json
 """
@@ -24,6 +27,7 @@ from rich.markdown import Markdown
 
 from . import __version__
 from .github_fetcher import parse_github_url
+from .atomgit_fetcher import parse_atomgit_url
 from .output_formatter import format_output
 from .virtual_runner import VirtualReviewRunner
 
@@ -57,33 +61,39 @@ async def run_review(
     quiet: bool = False,
     model: str | None = None,
 ):
-    """Run a review on a GitHub URL."""
+    """Run a review on a GitHub or AtomGit URL."""
+    platform = "atomgit" if ("atomgit.com" in url or "gitcode.com" in url) else "github"
+
     # Parse URL first to validate
     try:
-        owner, repo, number, url_type = parse_github_url(url)
+        if platform == "atomgit":
+            owner, repo, number, url_type = parse_atomgit_url(url)
+        else:
+            owner, repo, number, url_type = parse_github_url(url)
     except ValueError as e:
         print_error(str(e))
         sys.exit(1)
-    
+
     if not quiet:
         type_label = "PR" if url_type == "pr" else "Issue"
-        print_info(f"Reviewing {type_label}: {owner}/{repo}#{number}")
+        platform_label = "AtomGit" if platform == "atomgit" else "GitHub"
+        print_info(f"Reviewing {platform_label} {type_label}: {owner}/{repo}#{number}")
         print_info(f"Question: {question}")
         console.print()
-    
+
     # Create runner
     runner = VirtualReviewRunner(
         model=model,
         quiet=quiet,
         on_step=None if quiet else print_step,
     )
-    
+
     try:
         answer, sources, metadata = await runner.review(url, question)
     except Exception as e:
         print_error(f"Review failed: {e}")
         sys.exit(1)
-    
+
     # Format and print output
     model_name = metadata.get("model", model or "unknown")
     output = format_output(
@@ -93,7 +103,7 @@ async def run_review(
         output_format=output_format,
         metadata=metadata if output_format == "json" else None,
     )
-    
+
     if quiet or output_format == "json":
         # Raw output for scripting
         print(output)
@@ -109,34 +119,35 @@ async def run_review(
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="AsyncReview CLI - Review GitHub PRs and Issues",
+        description="AsyncReview CLI - Review GitHub and AtomGit PRs and Issues",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   asyncreview review --url https://github.com/org/repo/pull/123 -q "Any risks?"
+  asyncreview review --url https://atomgit.com/org/repo/pulls/456 -q "Review this"
   asyncreview review --url https://github.com/org/repo/issues/42 -q "What's needed?" --output markdown
   asyncreview review --url <url> -q "Review" --quiet --output json
         """,
     )
-    
+
     parser.add_argument(
         "--version", "-V",
         action="version",
         version=f"asyncreview {__version__}",
     )
-    
+
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
-    
+
     # review command
     review_parser = subparsers.add_parser(
         "review",
-        help="Review a GitHub PR or Issue",
+        help="Review a GitHub or AtomGit PR/Issue",
     )
     review_parser.add_argument(
         "--url", "-u",
         type=str,
         required=True,
-        help="GitHub PR or Issue URL",
+        help="GitHub or AtomGit PR/Issue URL",
     )
     review_parser.add_argument(
         "--question", "-q",
@@ -162,9 +173,9 @@ Examples:
         default=None,
         help="Model to use (e.g. gemini-3.0-pro-preview)",
     )
-    
+
     args = parser.parse_args()
-    
+
     if args.command == "review":
         asyncio.run(run_review(
             url=args.url,

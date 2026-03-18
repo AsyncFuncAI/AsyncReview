@@ -28,6 +28,11 @@ REVIEWS_DIR = CR_CACHE_DIR / "reviews"
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_API_BASE = os.getenv("GITHUB_API_BASE", "https://api.github.com")
 
+# AtomGit API configuration
+ATOMGIT_TOKEN = os.getenv("ATOMGIT_TOKEN", "")
+ATOMGIT_API_BASE = os.getenv("ATOMGIT_API_BASE", "https://api.atomgit.com")
+GITCODE_API_BASE = os.getenv("GITCODE_API_BASE", "https://api.gitcode.com")
+
 # API Server configuration
 API_HOST = os.getenv("API_HOST", "127.0.0.1")
 API_PORT = int(os.getenv("API_PORT", "8000"))
@@ -137,4 +142,3 @@ PRIORITY_PATTERNS = [
     "test/**",
     "spec/**",
 ]
-
