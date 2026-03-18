@@ -1,6 +1,6 @@
 # AsyncReview
 
-**Agentic Code Review for GitHub PRs and Issues**
+**Agentic Code Review for GitHub and AtomGit PRs and Issues**
 
 AsyncReview uses Recursive Language Models (RLM) to go beyond simple diff analysis. It autonomously explores your repository, fetches relevant context, and verifies its findings in a secure sandbox before answering.
 
@@ -64,11 +64,19 @@ npx skills add AsyncFuncAI/AsyncReview
 
 ### Public Repositories
 
-For public repos, you only need a Gemini API key.
+For GitHub public repos, you only need a Gemini API key.
 
 ```bash
 export GEMINI_API_KEY="your-key"
 npx asyncreview review --url https://github.com/org/repo/pull/123 -q "Review this"
+```
+
+For **AtomGit/GitCode**, a token is required even for public repos:
+
+```bash
+export ATOMGIT_TOKEN="your-token"
+npx asyncreview review --url https://atomgit.com/org/repo/pulls/456 -q "Review this PR"
+npx asyncreview review --url https://gitcode.com/org/repo/pull/789 -q "Check for bugs"
 ```
 
 ### Private Repositories
@@ -92,10 +100,11 @@ For private repos, you also need a GitHub token.
 ## Configuration
 
 **Required:**
-- **Gemini API Key:** Get one from Google AI Studio. Set as `GEMINI_API_KEY`.
+- **LLM API Key:** Gemini API Key (`GEMINI_API_KEY`) or Anthropic-compatible API (e.g., GLM via `ANTHROPIC_API_KEY` + `ANTHROPIC_API_BASE`)
 
 **Optional:**
-- **GitHub Token:** Required for private repositories to access file contents. Set as `GITHUB_TOKEN`.
+- **GitHub Token:** For private repos. Set as `GITHUB_TOKEN`.
+- **AtomGit/GitCode Token:** For AtomGit private repos. Set as `ATOMGIT_TOKEN`.
 
 ## For Agents (Claude, Cursor, OpenCode, Gemini, Codex, etc.)
 
