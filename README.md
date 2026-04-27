@@ -275,4 +275,4 @@ The runtime is automatically downloaded on first `npx asyncreview` run.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) 😊
