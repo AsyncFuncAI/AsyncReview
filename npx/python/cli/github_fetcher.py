@@ -202,6 +202,41 @@ async def fetch_issue(owner: str, repo: str, number: int) -> dict:
     }
 
 
+async def post_comment(owner: str, repo: str, number: int, body: str) -> dict:
+    """Post a comment to a GitHub PR or Issue.
+    
+    Uses the Issues API which works for both PRs and Issues.
+    
+    Args:
+        owner: Repository owner
+        repo: Repository name
+        number: PR or Issue number
+        body: Comment body (markdown supported)
+        
+    Returns:
+        dict with comment metadata (id, html_url, etc.)
+        
+    Raises:
+        ValueError: If GITHUB_TOKEN is not set
+        httpx.HTTPStatusError: If API call fails
+    """
+    if not GITHUB_TOKEN:
+        raise ValueError(
+            "GITHUB_TOKEN is required to post comments.\n"
+            "Set it via environment variable or .env file."
+        )
+    
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{GITHUB_API_BASE}/repos/{owner}/{repo}/issues/{number}/comments",
+            headers=_get_headers(),
+            json={"body": body},
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
 def build_pr_context(data: dict) -> str:
     """Build a structured text representation of a PR for RLM input.
     

@@ -38,7 +38,11 @@ Analyze the PR changes against these categories. Fetch the relevant checklist if
 
 1. First, understand the PR: read the diff, description, and any related files
 2. Decide which categories are relevant based on the changes
-3. Fetch checklists for relevant categories using `FETCH_FILE:checklists/<name>.md`
+3. Fetch the relevant checklist(s) for your analysis:
+   - `FETCH_FILE:checklists/solid-checklist.md` for SOLID & Architecture
+   - `FETCH_FILE:checklists/security-checklist.md` for Security & Reliability
+   - `FETCH_FILE:checklists/code-quality-checklist.md` for Code Quality
+   - `FETCH_FILE:checklists/removal-plan.md` for Removal Candidates
 4. Apply the checklists to find issues
 5. Classify each finding by severity (P0, P1, P2, P3)
 6. Provide fix suggestions for P0 and P1 issues

@@ -251,7 +251,8 @@ export async function installAsyncReview(systemPython: string, quiet: boolean = 
 }
 
 export interface RunOptions {
-    url: string;
+    url?: string;
+    path?: string;
     question?: string;
     output: string;
     quiet: boolean;
@@ -282,9 +283,16 @@ export async function runPythonReview(options: RunOptions): Promise<string> {
         const args = [
             '-m', 'cli.main',
             'review',
-            '--url', options.url,
-            '--output', options.output,
         ];
+
+        // Add either --url or --path (mutually exclusive)
+        if (options.url) {
+            args.push('--url', options.url);
+        } else if (options.path) {
+            args.push('--path', options.path);
+        }
+
+        args.push('--output', options.output);
 
         // Add question if provided
         if (options.question) {
