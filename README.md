@@ -120,6 +120,11 @@ If you prefer manual configuration, point your agent to the skill definition fil
 
 To run the full backend server or web interface locally, please see the [Installation Guide](INSTALLATION.md).
 
+## Roadmap
+
+- **DeepSeek V4 Support** — Bringing DeepSeek's latest model as an alternative LLM backend, alongside the current Gemini integration. Stay tuned.
+- **Haiku by Claude Support** — Adding Anthropic's lightweight Claude Haiku model as another LLM backend option.
+
 ## License
 
 MIT
