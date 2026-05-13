@@ -32,7 +32,7 @@ export async function runReview(options: ReviewOptions): Promise<void> {
     try {
 
         // 4. Get API key
-        const apiKey = await getApiKey(api);
+        const apiKey = await getApiKey(api, model);
 
         // 5. Get GitHub token only if using URL mode (not required for local path mode)
         let ghToken: string | undefined;

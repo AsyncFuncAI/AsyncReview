@@ -1,4 +1,4 @@
-"""E2E tests for VirtualReviewRunner with real Gemini API and GitHub.
+"""E2E tests for VirtualReviewRunner with real LLM API and GitHub.
 
 These tests verify:
 1. FETCH_FILE tool interception works across iterations
@@ -7,8 +7,8 @@ These tests verify:
 4. Multi-turn RLM conversations handle state correctly
 
 Requirements:
-- GEMINI_API_KEY environment variable must be set
-- Internet connection for GitHub and Gemini API
+- GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY environment variable must be set
+- Internet connection for GitHub and the selected LLM provider
 - Deno must be installed and in PATH
 """
 
@@ -17,19 +17,23 @@ import os
 import pytest
 from cli.virtual_runner import VirtualReviewRunner
 
+LLM_API_KEY_VARS = ("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
+TEST_MODEL = os.getenv("ASYNCREVIEW_TEST_MODEL", "gemini-2.0-flash-exp")
+
 
 # Require explicit API key for E2E tests
 @pytest.fixture(scope="module")
-def gemini_api_key():
-    """Ensure GEMINI_API_KEY is set for E2E tests."""
-    key = os.getenv("GEMINI_API_KEY")
-    if not key:
-        pytest.skip("GEMINI_API_KEY not set, skipping E2E tests")
-    return key
+def llm_api_key():
+    """Ensure an LLM provider API key is set for E2E tests."""
+    for name in LLM_API_KEY_VARS:
+        key = os.getenv(name)
+        if key:
+            return key
+    pytest.skip("No LLM API key set, skipping E2E tests")
 
 
 @pytest.mark.asyncio
-async def test_fetch_file_interception(gemini_api_key):
+async def test_fetch_file_interception(llm_api_key):
     """Test that FETCH_FILE reliably populates repo_files across iterations.
     
     This is the core test for the variable rebuild fix. It verifies that when
@@ -40,7 +44,7 @@ async def test_fetch_file_interception(gemini_api_key):
     url = "https://github.com/stanfordnlp/dspy/pull/9240"
     question = "What is in dspy/predict/rlm.py? Please fetch and analyze the complete contents of this file."
     
-    runner = VirtualReviewRunner(model="gemini-3-flash-preview", quiet=False)
+    runner = VirtualReviewRunner(model=TEST_MODEL, quiet=False)
     
     # Intercept to verify state propagation
     original_acall = None
@@ -81,12 +85,12 @@ async def test_fetch_file_interception(gemini_api_key):
 
 
 @pytest.mark.asyncio
-async def test_search_code_tool(gemini_api_key):
+async def test_search_code_tool(llm_api_key):
     """Test SEARCH_CODE tool integration."""
     url = "https://github.com/stanfordnlp/dspy/pull/9240"
     question = "Use SEARCH_CODE to find all files related to 'DataFrame'. List the paths you find."
     
-    runner = VirtualReviewRunner(model="gemini-2.0-flash-exp", quiet=True)
+    runner = VirtualReviewRunner(model=TEST_MODEL, quiet=True)
     
     answer, sources, metadata = await runner.review(url, question)
     
@@ -97,12 +101,12 @@ async def test_search_code_tool(gemini_api_key):
 
 
 @pytest.mark.asyncio
-async def test_list_directory_tool(gemini_api_key):
+async def test_list_directory_tool(llm_api_key):
     """Test LIST_DIR tool integration."""
     url = "https://github.com/stanfordnlp/dspy/pull/9240"
     question = "Use LIST_DIR to list the contents of the 'dspy/predict/' directory."
     
-    runner = VirtualReviewRunner(model="gemini-2.0-flash-exp", quiet=True)
+    runner = VirtualReviewRunner(model=TEST_MODEL, quiet=True)
     
     answer, sources, metadata = await runner.review(url, question)
     
@@ -113,13 +117,13 @@ async def test_list_directory_tool(gemini_api_key):
 
 
 @pytest.mark.asyncio
-async def test_multi_file_fetch(gemini_api_key):
+async def test_multi_file_fetch(llm_api_key):
     """Test fetching multiple files in sequence."""
     url = "https://github.com/stanfordnlp/dspy/pull/9240"
     question = ("Find and fetch both dspy/predict/rlm.py and any test file related to RLM. "
                 "Compare their contents briefly.")
     
-    runner = VirtualReviewRunner(model="gemini-2.0-flash-exp", quiet=True)
+    runner = VirtualReviewRunner(model=TEST_MODEL, quiet=True)
     
     answer, sources, metadata = await runner.review(url, question)
     
@@ -132,12 +136,12 @@ async def test_multi_file_fetch(gemini_api_key):
 
 
 @pytest.mark.asyncio
-async def test_error_handling_invalid_path(gemini_api_key):
+async def test_error_handling_invalid_path(llm_api_key):
     """Test that invalid file paths are handled gracefully."""
     url = "https://github.com/stanfordnlp/dspy/pull/9240"
     question = "Try to fetch the file 'nonexistent/fake/path.py' and report what happens."
     
-    runner = VirtualReviewRunner(model="gemini-2.0-flash-exp", quiet=True)
+    runner = VirtualReviewRunner(model=TEST_MODEL, quiet=True)
     
     # Should not raise, even with invalid path
     answer, sources, metadata = await runner.review(url, question)
@@ -150,13 +154,13 @@ async def test_error_handling_invalid_path(gemini_api_key):
 
 
 @pytest.mark.asyncio
-async def test_issue_review(gemini_api_key):
+async def test_issue_review(llm_api_key):
     """Test reviewing a GitHub issue (not just PRs)."""
     # Use a known issue
     url = "https://github.com/stanfordnlp/dspy/issues/100"
     question = "Summarize what this issue is about."
     
-    runner = VirtualReviewRunner(model="gemini-2.0-flash-exp", quiet=True)
+    runner = VirtualReviewRunner(model=TEST_MODEL, quiet=True)
     
     answer, sources, metadata = await runner.review(url, question)
     
@@ -164,14 +168,14 @@ async def test_issue_review(gemini_api_key):
     assert metadata.get("type") == "issue", "Should identify as issue type"
 
 
-@pytest.mark.asyncio 
-async def test_context_preservation(gemini_api_key):
+@pytest.mark.asyncio
+async def test_context_preservation(llm_api_key):
     """Test that PR context (diff, description) is preserved alongside tool results."""
     url = "https://github.com/stanfordnlp/dspy/pull/9240"
     question = ("Based on the PR description and the actual code in dspy/predict/rlm.py, "
                 "explain how the DataFrame feature is implemented.")
     
-    runner = VirtualReviewRunner(model="gemini-2.0-flash-exp", quiet=True)
+    runner = VirtualReviewRunner(model=TEST_MODEL, quiet=True)
     
     answer, sources, metadata = await runner.review(url, question)
     
@@ -187,9 +191,9 @@ if __name__ == "__main__":
     # Allow running tests directly with: python test_e2e_virtual_runner.py
     import sys
     
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = next((os.getenv(name) for name in LLM_API_KEY_VARS if os.getenv(name)), None)
     if not api_key:
-        print("ERROR: GEMINI_API_KEY not set")
+        print("ERROR: no LLM API key set")
         sys.exit(1)
     
     print("Running E2E tests...")

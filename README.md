@@ -64,11 +64,28 @@ npx skills add AsyncFuncAI/AsyncReview
 
 ### Public Repositories
 
-For public repos, you only need a Gemini API key.
+For public repos, you only need a Gemini API key by default.
 
 ```bash
 export GEMINI_API_KEY="your-key"
 npx asyncreview review --url https://github.com/org/repo/pull/123 -q "Review this"
+```
+
+### Using non-Gemini providers
+
+AsyncReview passes model names directly to DSPy/LiteLLM, so you can use any
+LiteLLM-compatible provider prefix. Gemini remains the default.
+
+```bash
+# OpenAI
+export OPENAI_API_KEY="your-key"
+npx asyncreview review --url https://github.com/org/repo/pull/123 \
+  -q "Review this" --model openai/gpt-4o-mini
+
+# Local Ollama
+ollama serve
+npx asyncreview review --url https://github.com/org/repo/pull/123 \
+  -q "Review this" --model ollama_chat/qwen3:4b
 ```
 
 ### Private Repositories
@@ -92,7 +109,7 @@ For private repos, you also need a GitHub token.
 ## Configuration
 
 **Required:**
-- **Gemini API Key:** Get one from Google AI Studio. Set as `GEMINI_API_KEY`.
+- **LLM API Key:** Gemini uses `GEMINI_API_KEY`; other LiteLLM providers use their own env vars, such as `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
 
 **Optional:**
 - **GitHub Token:** Required for private repositories to access file contents. Set as `GITHUB_TOKEN`.

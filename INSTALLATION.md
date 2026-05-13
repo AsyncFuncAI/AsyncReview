@@ -103,6 +103,23 @@ GITHUB_TOKEN=your_github_token_here  # Optional for npx, required for web UI
     - Select `repo` scope for private repositories
     - Select `public_repo` for public repositories only
 
+### Using non-Gemini providers
+
+AsyncReview uses DSPy/LiteLLM model prefixes, so provider-specific environment
+variables are picked up automatically when you choose a matching model.
+
+```bash
+# OpenAI
+export OPENAI_API_KEY=your_openai_api_key
+asyncreview review --url https://github.com/org/repo/pull/123 \
+  -q "Review this" --model openai/gpt-4o-mini
+
+# Local Ollama
+ollama serve
+asyncreview review --url https://github.com/org/repo/pull/123 \
+  -q "Review this" --model ollama_chat/qwen3:4b
+```
+
 ## Running AsyncReview Locally
 
 ### Option 1: Using the API Server + Web UI

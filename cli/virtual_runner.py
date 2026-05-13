@@ -16,6 +16,13 @@ from .github_fetcher import (
 )
 
 
+def _normalize_model_name(model_name: str) -> str:
+    """Keep legacy bare Gemini names working while allowing LiteLLM prefixes."""
+    if model_name.startswith("gemini-"):
+        return f"gemini/{model_name}"
+    return model_name
+
+
 class VirtualReviewRunner:
     """Run RLM code reviews on GitHub PRs without a local repository.
     
@@ -31,7 +38,7 @@ class VirtualReviewRunner:
         """Initialize the virtual runner.
         
         Args:
-            model: Override model (e.g. "gemini-3.0-pro-preview")
+            model: Override model (e.g. "gemini/gemini-3-pro-preview" or "openai/gpt-4o")
             quiet: If True, suppress progress output
             on_step: Optional callback for RLM step updates
         """
@@ -59,11 +66,7 @@ class VirtualReviewRunner:
             logging.getLogger(name).setLevel(logging.WARNING)
         
         # Configure DSPy with specified model
-        model_name = self.model
-        if not model_name.startswith("gemini/"):
-            model_name = f"gemini/{model_name}"
-        
-        dspy.configure(lm=dspy.LM(model_name))
+        dspy.configure(lm=dspy.LM(_normalize_model_name(self.model)))
         
         # Create RLM with custom interpreter that has Deno 2.x fix
         from dspy.primitives.python_interpreter import PythonInterpreter
@@ -76,7 +79,7 @@ class VirtualReviewRunner:
             signature="context, question -> answer, sources",
             max_iterations=MAX_ITERATIONS,
             max_llm_calls=MAX_LLM_CALLS,
-            sub_lm=dspy.LM(f"gemini/{SUB_MODEL}" if not SUB_MODEL.startswith("gemini/") else SUB_MODEL),
+            sub_lm=dspy.LM(_normalize_model_name(SUB_MODEL)),
             verbose=not self.quiet,
             interpreter=interpreter,
         )

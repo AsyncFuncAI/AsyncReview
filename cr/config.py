@@ -7,6 +7,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # LLM Configuration
+# LiteLLM reads provider-specific keys such as OPENAI_API_KEY, ANTHROPIC_API_KEY,
+# GROQ_API_KEY, and OLLAMA_API_BASE directly based on the model prefix.
+# GEMINI_API_KEY remains supported for the default Gemini models.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 MAIN_MODEL = os.getenv("MAIN_MODEL", "gemini/gemini-3-pro-preview")
 SUB_MODEL = os.getenv("SUB_MODEL", "gemini/gemini-3-flash-preview")
@@ -137,4 +140,3 @@ PRIORITY_PATTERNS = [
     "test/**",
     "spec/**",
 ]
-
