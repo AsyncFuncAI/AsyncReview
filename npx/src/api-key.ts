@@ -5,23 +5,32 @@
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 
-export async function getApiKey(cliApiKey?: string): Promise<string> {
+const LLM_API_KEY_VARS = ['GEMINI_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY'];
+
+function usesLocalProvider(model?: string): boolean {
+    return !!model && (model.startsWith('ollama/') || model.startsWith('ollama_chat/'));
+}
+
+export async function getApiKey(cliApiKey?: string, model?: string): Promise<string | undefined> {
     // 1. Check --api flag first (highest priority)
     if (cliApiKey) {
         return cliApiKey;
     }
 
-    // 2. Check environment variable
-    const envKey = process.env.GEMINI_API_KEY;
-    if (envKey) {
-        return envKey;
+    // 2. Check provider-specific environment variables used by LiteLLM
+    if (LLM_API_KEY_VARS.some((name) => process.env[name])) {
+        return undefined;
+    }
+
+    if (usesLocalProvider(model)) {
+        return undefined;
     }
 
     // 3. No API key found - prompt user
-    console.log(chalk.yellow('\n⚠️  No Gemini API key found.\n'));
+    console.log(chalk.yellow('\n⚠️  No LLM API key found.\n'));
     console.log(chalk.dim('You can set it via:'));
-    console.log(chalk.dim('  • --api <key> flag'));
-    console.log(chalk.dim('  • GEMINI_API_KEY environment variable\n'));
+    console.log(chalk.dim('  • --api <key> flag for Gemini'));
+    console.log(chalk.dim('  • GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY environment variable\n'));
 
     const answers = await inquirer.prompt([
         {

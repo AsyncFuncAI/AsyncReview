@@ -1,7 +1,7 @@
-"""Integration tests with real Gemini API calls.
+"""Integration tests with real LLM API calls.
 
 These tests require:
-1. GEMINI_API_KEY in .env
+1. GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY in .env
 2. GITHUB_TOKEN in .env (for public repo access)
 
 Run with: uv run pytest tests/test_integration.py -v -s
@@ -14,10 +14,12 @@ RLM tests run after.
 import os
 import pytest
 
+LLM_API_KEY_VARS = ("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
+
 # Skip all tests if no API key
 pytestmark = pytest.mark.skipif(
-    not os.getenv("GEMINI_API_KEY") and not os.path.exists(".env"),
-    reason="GEMINI_API_KEY not set"
+    not any(os.getenv(name) for name in LLM_API_KEY_VARS) and not os.path.exists(".env"),
+    reason="No LLM API key set",
 )
 
 
@@ -118,4 +120,3 @@ class TestServerIntegration:
             print(f"[{block['type']}]: {block['content'][:200]}...")
         
         assert len(answer["answerBlocks"]) > 0
-

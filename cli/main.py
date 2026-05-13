@@ -160,7 +160,10 @@ Examples:
         "--model", "-m",
         type=str,
         default=None,
-        help="Model to use (e.g. gemini-3.0-pro-preview)",
+        help=(
+            "Model to use (e.g. gemini/gemini-3-pro-preview, "
+            "openai/gpt-4o, anthropic/claude-3-5-sonnet, ollama_chat/qwen3:4b)"
+        ),
     )
     
     args = parser.parse_args()

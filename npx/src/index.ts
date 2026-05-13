@@ -23,7 +23,10 @@ program
     .option('--expert', 'Run expert code review (SOLID, Security, Performance, Code Quality)')
     .option('-o, --output <format>', 'Output format: text, markdown, json', 'text')
     .option('--quiet', 'Suppress progress output')
-    .option('-m, --model <model>', 'Model to use (e.g. gemini-3-pro-preview)')
+    .option(
+        '-m, --model <model>',
+        'Model to use (e.g. gemini/gemini-3-pro-preview, openai/gpt-4o, anthropic/claude-3-5-sonnet, ollama_chat/qwen3:4b)'
+    )
     .option('--api <key>', 'Gemini API key (defaults to GEMINI_API_KEY env var)')
     .option('--github-token <token>', 'GitHub token for private repos (defaults to GITHUB_TOKEN env var)')
     .action(async (options) => {
